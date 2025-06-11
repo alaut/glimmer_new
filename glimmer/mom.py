@@ -47,7 +47,7 @@ class MoM(PolyData):
         # rwg centroids (2 x M x 3)
         self.rmc = np.mean(self.rm, axis=1)
 
-        # rwg vertex fields ( 2 x 3 x M x 3)
+        # rwg vertex fields (2 x 3 x M x 3)
         Em = (self["Er"] + 1j * self["Ei"])[self.con_rwg]
 
         # rwg centroid fields (2 x M x 3)
@@ -59,6 +59,7 @@ class MoM(PolyData):
 
         # face vertex to centroid midpoints
         self.rp = self.rc
+        self.rp = (self.rc + self.r[0])/2
 
         # kite area of integrated component
         dSp = A
@@ -91,7 +92,6 @@ class MoM(PolyData):
         # Greens function (2 x M x n)
         with np.errstate(divide="ignore", invalid="ignore"):
             G = np.exp(-1j * self.k * Rm) / (4 * np.pi * Rm)
-            G[ind] = 0
 
         # angular frequency
         omega = self.k / np.sqrt(mu * eps)
@@ -102,7 +102,7 @@ class MoM(PolyData):
         self.rhomc = pm * (self.rmc - self.rm[:, -1])
 
         # excitation vector
-        V = lm * np.sum(Emc * self.rhomc, axis=(0, -1)) / 2
+        V = lm * np.sum(Emc * self.rhomc/2, axis=(0, -1))
 
         # form impedance matrix
         Z = lm * (1j * omega * np.sum(
