@@ -309,6 +309,8 @@ class Mirror(Grid):
             fx, fy = unpack(self.f)
 
             z = -(x**2) / (4 * fx) - y**2 / (4 * fy)
+        else:
+            z = np.zeros_like(x)
 
         super().__init__(x, y, z, **kwargs)
 
