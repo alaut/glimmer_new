@@ -92,7 +92,7 @@ class Grid(StructuredGrid):
     def round(self, decimals=3):
 
         for k, v in self.__dict__.items():
-            if "_" not in k:
+            if "_" not in k and v is not None:
                 try:
                     self.__dict__[k] = tuple(
                         float(round(x, decimals)) for x in v)
