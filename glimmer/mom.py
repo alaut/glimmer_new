@@ -296,9 +296,11 @@ if __name__ == "__main__":
     src.rotate_z(5)
     src.rotate_y(3)
 
-    s = src.zR / 2
+    zR = np.pi * np.array(src.w0)**2 / src.lam
+
+    s = zR / 2
     c = np.cos(np.pi / 4)
-    w = src.w0 * (1 + (s / src.zR) ** 2) ** 0.5
+    w = src.w0 * (1 + (s / zR) ** 2) ** 0.5
 
     options = {
         "L": (src.num_waist * w, src.num_waist * w / c),
