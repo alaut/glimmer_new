@@ -1,5 +1,3 @@
-
-
 from cupyx.scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
@@ -54,15 +52,16 @@ class MoM(PolyData):
         Emc = np.mean(Em, axis=1)
 
         # areas of faces (N)
-        A = area(self.r[0] - self.r[-1],
-                 self.r[1] - self.r[-1])
+        A = area(self.r[0] - self.r[-1], self.r[1] - self.r[-1])
 
         # face vertex to centroid midpoints
         self.rp = self.rc
-        self.rp = (self.rc + self.r[0])/2
+        self.rp = (self.rc + self.r[0]) / 2
+        self.rp = 0.5 * (self.rc + self.r).reshape(-1, 3, order="F")
 
         # kite area of integrated component
         dSp = A
+        dSp = np.stack([A / 3, A / 3, A / 3]).reshape(-1, order="F")
 
         # area of rwg faces (2 x M)
         Am = area(self.rm[:, 0] - self.rm[:, -1],
@@ -76,54 +75,64 @@ class MoM(PolyData):
 
         # match con to rwg connectivity (2 x M x N)
         ind = np.all(
-            np.sort(self.con[:, None, :], axis=0) == np.sort(self.con_rwg[..., None], axis=1), axis=1
+            np.sort(self.con[:, None, :], axis=0)
+            == np.sort(self.con_rwg[..., None], axis=1),
+            axis=1,
         )
 
+        ind = np.stack([ind, ind, ind], axis=-2)
+        ind = ind.reshape(ind.shape[0], ind.shape[1], -1, order="F")
+
         # rwg basis functions; compute displacement from face center to free rwg vertex (2 x M x N x 3)
-        rho = pm[..., None]*(self.rp - self.rm[:, -1][..., None, :])
+        rho = pm[..., None] * (self.rp - self.rm[:, -1][..., None, :])
         fm = 0.5 * (lm / Am)[..., None, None] * rho * ind[..., None]
 
         # rwg divergence (2 x M x N)
-        dfm = pm*(lm / Am)[..., None] * ind
+        dfm = pm * (lm / Am)[..., None] * ind
 
         # interaction displacement vector (2 x M x M)
         Rm = np.linalg.norm(self.rmc[..., None, :] - self.rp, axis=-1)
 
         # Greens function (2 x M x n)
         with np.errstate(divide="ignore", invalid="ignore"):
-            G = np.exp(-1j * self.k * Rm) / (4 * np.pi * Rm)
+            G = np.exp(-1j * self.k * Rm) / Rm
 
         # angular frequency
         omega = self.k / np.sqrt(mu * eps)
 
-        Avec, phi = compute_potentials(fm, dfm, G*dSp, omega)
+        Avec, phi = compute_potentials(fm, dfm, G * dSp, omega)
 
         # centroid basis displacement rwg centroid to free vertex
         self.rhomc = pm * (self.rmc - self.rm[:, -1])
 
         # excitation vector
-        V = lm * np.sum(Emc * self.rhomc/2, axis=(0, -1))
+        V = lm * np.sum(Emc * self.rhomc / 2, axis=(0, -1))
 
         # form impedance matrix
-        Z = lm * (1j * omega * np.sum(
-            Avec * self.rhomc[..., None, :], axis=(0, -1))/2 + (phi[1] - phi[0])
+        Z = lm * (
+            1j * omega *
+            np.sum(Avec * self.rhomc[..., None, :], axis=(0, -1)) / 2
+            + phi[0]
+            - phi[1]
         )
 
         # solve basis currents
         I = gmres(cp.asarray(Z), cp.asarray(V))[0].get()
 
         # solve for unknown surface currents
-        J = np.sum(I[:, None, None] * fm, axis=(0, 1))
-        J02 = np.linalg.norm(J, axis=-1)**2
+        self.J = np.sum(I[:, None, None] * fm, axis=(0, 1))
+        J = (self.J[::3] + self.J[1::3] + self.J[2::3]) / 3
+        J02 = np.linalg.norm(J, axis=-1) ** 2
 
         self.cell_data["Jr"] = J.real
         self.cell_data["Ji"] = J.imag
         self.cell_data["|J|^2"] = J02
-        self.cell_data["|J|^2 (dB)"] = 10*np.log(J02/J02.max())
+        self.cell_data["|J|^2 (dB)"] = 10 * np.log(J02 / J02.max())
 
         # store 2D data
         self.data = {
-            "$(r' \\in T_m^+) - (r' \\in T_m^-)$": ind[0].astype(int)-ind[1].astype(int),
+            "$(r' \\in T_m^+) - (r' \\in T_m^-)$": ind[0].astype(int)
+            - ind[1].astype(int),
             "$R_m^\\pm$": np.sum(Rm, axis=0),
             "$G_m(r')$": np.sum(G, 0),
             "$A$": np.sum(np.linalg.norm(Avec, axis=-1), axis=0),
@@ -174,10 +183,7 @@ class MoM(PolyData):
         vp, vn = np.stack(free_vertices, axis=-1)
 
         # rwg connectivity (2 x 3 x M)
-        self.con_rwg = np.stack([
-            [v1, v2, vp],
-            [v2, v1, vn]
-        ])
+        self.con_rwg = np.stack([[v1, v2, vp], [v2, v1, vn]])
 
         self.M = self.con_rwg.shape[-1]
         print(f"M: {self.M} edges")
@@ -199,25 +205,30 @@ class MoM(PolyData):
         self.N = self.con.shape[-1]
         print(f"N: {self.N} faces")
 
-    def plot_mesh(self, label=False):
+    def plot_mesh(self, points=True, vectors=True, text=False):
 
         rp, rn = self.rm[:, -1]
 
         rhomcp, rhomcn = self.rhomc
 
         plotter = Plotter()
-
-        plotter.add_points(self.rp.reshape(-1, 3),
-                           render_points_as_spheres=True, color='green')
-        plotter.add_points(
-            self.rc, render_points_as_spheres=True, color='magenta')
-
         plotter.add_mesh(self, scalars="|J|^2", show_edges=True)
 
-        if label:
+        if points:
+            Jp = np.linalg.norm(self.J, axis=-1)
+            plotter.add_points(
+                self.rp.reshape(-1, 3),
+                render_points_as_spheres=True,
+                scalars=Jp.reshape(-1),
+            )
+            plotter.add_points(
+                self.rc, render_points_as_spheres=True, color="magenta")
 
+        if vectors:
             plotter.add_arrows(rp, rhomcp, color="red")
             plotter.add_arrows(rn - rhomcn, rhomcn, color="blue")
+
+        if text:
             labels = [[str(x) for x in con.T] for con in self.con_rwg]
             plotter.add_point_labels(
                 rp + rhomcp / 2, labels[0], text_color="red")
@@ -252,11 +263,11 @@ class MoM(PolyData):
         plt.show()
 
 
-def compute_potentials(F, dF, G, omega):
+def compute_potentials(F, dF, GdSp, omega):
 
-    print('computing potentials ...')
+    print("computing potentials ...")
 
-    G = cp.asarray(G)
+    GdSp = cp.asarray(GdSp)
     F = cp.asarray(F)
     dF = cp.asarray(dF)
 
@@ -264,14 +275,58 @@ def compute_potentials(F, dF, G, omega):
     J = range(3)
 
     # compute vector potential (2 x M x M x 3)
-    Avec = [[G[i] @ csr_matrix(F[i, ..., j].T) for i in I] for j in J]
+    Avec = [[GdSp[i] @ csr_matrix(F[i, ..., j].T) for i in I] for j in J]
 
     # compute scalar potential (2 x M x M)
-    phi = [G[i] @ csr_matrix(dF[i].T) for i in I]
+    phi = [GdSp[i] @ csr_matrix(dF[i].T) for i in I]
 
-    Avec = mu * cp.stack(cp.array(Avec), axis=-1)
-    phi = 1j / (omega * eps) * cp.array(phi)
+    Avec = mu / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1)
+    phi = -1 / (4 * np.pi * 1j * omega * eps) * cp.array(phi)
 
     print("finished computing potentials !")
 
     return Avec.get(), phi.get()
+
+
+if __name__ == "__main__":
+
+    from glimmer import Gaussian, Mirror
+
+    src = Gaussian(w0=10, lam=3, num_lam=3, num_waist=2)
+    src.rotate_z(5)
+    src.rotate_y(3)
+
+    s = src.zR / 2
+    c = np.cos(np.pi / 4)
+    w = src.w0 * (1 + (s / src.zR) ** 2) ** 0.5
+
+    options = {
+        "L": (src.num_waist * w, src.num_waist * w / c),
+        "dL": src.lam / src.num_lam,
+        #  "f": (s * c, s / c)
+        "f": None,
+    }
+
+    m1 = Mirror(**options)
+    m1.rotate_x(45)
+    m1.translate([0, 0, s])
+    m1.round()
+
+    m2 = Mirror(**options)
+    m2.rotate_x(-45)
+    m2.translate([0, 2 * s, s])
+    m2.round()
+
+    src.radiate(m1)
+    src.radiate(m2)
+
+    mom = MoM(
+        pec=m1 + m2,
+        k=src.k,
+    )
+
+    plotter = mom.plot_mesh()
+    plotter.add_mesh(src, scalars='|E|^2')
+    plotter.show()
+
+    mom.show_charts()
