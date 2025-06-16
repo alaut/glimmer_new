@@ -94,8 +94,7 @@ class Grid(StructuredGrid):
         for k, v in self.__dict__.items():
             if "_" not in k and v is not None:
                 try:
-                    self.__dict__[k] = tuple(
-                        float(round(x, decimals)) for x in v)
+                    self.__dict__[k] = tuple(float(round(x, decimals)) for x in v)
                 except:
                     self.__dict__[k] = float(round(v, decimals))
 
@@ -276,8 +275,7 @@ class Gaussian(Grid):
 
         wx, wy = unpack(self.w0)
 
-        x, y = span((wx * self.num_waist, wy * self.num_waist),
-                    self.lam / self.num_lam)
+        x, y = span((wx * self.num_waist, wy * self.num_waist), self.lam / self.num_lam)
 
         super().__init__(*np.broadcast_arrays(x, y, 0))
 
@@ -361,8 +359,7 @@ class Problem:
         for i, (obj, actor) in enumerate(self.actors):
             if obj.dimensionality == 3:
                 self.plotter.remove_actor(actor)
-                new_actor = self.plotter.add_volume(
-                    obj, clim=self.clim, cmap=self.cmap)
+                new_actor = self.plotter.add_volume(obj, clim=self.clim, cmap=self.cmap)
                 self.actors[i] = (obj, new_actor)
 
         self.plotter.render()
@@ -419,8 +416,8 @@ class Problem:
 if __name__ == "__main__":
 
     src = Gaussian(w0=10, lam=3, num_lam=3, num_waist=2)
-    # src.rotate_z(5)
-    # src.rotate_y(3)
+    src.rotate_z(5)
+    src.rotate_y(3)
 
     zR = np.pi * src.w0**2 / src.lam
 
@@ -429,18 +426,14 @@ if __name__ == "__main__":
 
     L = src.num_waist * src.w0 * (1 + (s / zR) ** 2) ** 0.5
 
-    mopts = {"L": (L, L / c), "dL": src.lam / src.num_lam,
-             "f": (s * c, s / c)
-             #  'f': None,
-             }
+    options = {"L": (L, L / c), "dL": src.lam / src.num_lam, "f": (s * c, s / c)}
 
-    m1 = Mirror(**mopts)
+    m1 = Mirror(**options)
     m1.rotate_x(45)
     m1.translate([0, 0, s])
     m1.round()
-    # m1.flip_faces(inplace=True)
 
-    m2 = Mirror(**mopts)
+    m2 = Mirror(**options)
     m2.rotate_x(-45)
     m2.translate([0, 2 * s, s])
     m2.round()
@@ -450,8 +443,6 @@ if __name__ == "__main__":
         d=3, xlim=(-L / 2, L / 2), ylim=(-L / 2, 2 * s + L / 2), zlim=(0, s + L / 2)
     )
 
-    problem = Problem(source=src, optics=[m1], probes=[yz])
-    # problem = Problem(source=src, optics=[m1, m2], probes=[yz, vol])
+    problem = Problem(source=src, optics=[m1, m2], probes=[yz, vol])
     problem.solve()
-    # problem.save("./temp/demo")
     problem.plot().show()
