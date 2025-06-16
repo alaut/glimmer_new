@@ -413,7 +413,8 @@ class Problem:
             probe.save(f"{name}.probe.{i}.vtk")
 
 
-if __name__ == "__main__":
+def demo():
+    """run gaussian telescope demo"""
 
     src = Gaussian(w0=10, lam=3, num_lam=3, num_waist=2)
     src.rotate_z(5)
@@ -446,3 +447,7 @@ if __name__ == "__main__":
     problem = Problem(source=src, optics=[m1, m2], probes=[yz, vol])
     problem.solve()
     problem.plot().show()
+
+
+if __name__ == "__main__":
+    demo()
