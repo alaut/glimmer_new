@@ -89,7 +89,8 @@ class Grid(StructuredGrid):
 
         self.set_fields()
 
-    def round(self, decimals=3):
+    def round_repr(self, decimals=3):
+        """round the attributes visible in dataclass repr"""
 
         for k, v in self.__dict__.items():
             if "_" not in k and v is not None:
@@ -312,7 +313,7 @@ class Mirror(Grid):
 
         super().__init__(x, y, z, **kwargs)
 
-        self.round()
+        self.round_repr()
 
 
 @dataclass
@@ -329,7 +330,7 @@ class Problem:
     def solve(self):
 
         for obj in [self.source, *self.optics, *self.probes]:
-            obj.round()
+            obj.round_repr()
 
         sources = [self.source.radiate]
 
@@ -432,12 +433,10 @@ def demo():
     m1 = Mirror(**options)
     m1.rotate_x(45)
     m1.translate([0, 0, s])
-    m1.round()
 
     m2 = Mirror(**options)
     m2.rotate_x(-45)
     m2.translate([0, 2 * s, s])
-    m2.round()
 
     yz = Volume(d=1, ylim=(-L / 2, 2 * s + L / 2), zlim=(0, s + L / 2))
     vol = Volume(
