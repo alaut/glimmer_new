@@ -1,22 +1,23 @@
-from cupyx.scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
+
 import numpy as np
+import cupy as cp
+
+from cupyx.scipy.sparse import csr_matrix
 
 from cupyx.scipy.sparse.linalg import gmres
 
-import cupy as cp
 
-from pyvista import Plotter, PolyData, UnstructuredGrid, Arrow
+from pyvista import Plotter, PolyData, UnstructuredGrid
 
 eta = 377
-mu = 4e-7 * np.pi
-eps = 8.854187817e-12
 
+# c = 3e8
+mu = 4e-7*np.pi
+eps = 8.854e-12
 
-def area(u, v):
-    """compute area of triangle defined by vectors u and v"""
-    return 0.5 * np.linalg.norm(np.cross(u, v, axis=-1), axis=-1)
+# eta = np.sqrt(mu/eps)
 
 
 @dataclass
@@ -24,6 +25,11 @@ class MoM(PolyData):
 
     k: float
     pec: UnstructuredGrid
+
+    # s: float = 0.5
+    s: float = None
+
+    order: str = 'C'
 
     def __post_init__(self):
 
@@ -35,9 +41,12 @@ class MoM(PolyData):
 
         # convert quad mesh to triangle mesh
         self.triangulate(inplace=True)
+        self.clean()
 
         # (3 x N) point connectivity for triangulation (v1, v2, v3)
         self.con = self.faces.reshape(-1, 4)[:, 1:]
+
+        N = self.con.shape[0]
 
         # setup rwg basis (v1, v2, vp), (v1, v2, vn)
         edges, vp, vn = setup_rwg_connectivity(self.con)
@@ -52,6 +61,8 @@ class MoM(PolyData):
 
         # rwg vertices (2 x M x 3 x 3)
         rm = self.points[self.con_m]
+
+        M = self.con_m.shape[1]
 
         # rwg edge length
         lm = np.linalg.norm(rm[0, :, 0] - rm[0, :, 1], axis=-1)
@@ -78,33 +89,38 @@ class MoM(PolyData):
         pm = np.array([1, -1])[:, None, None]
 
         # match con to rwg connectivity (2 x M x N)
-        ind = np.all(np.sort(self.con) == np.sort(
-            self.con_m)[..., None, :], axis=-1)
+        ind = pm*np.all(
+            np.sort(self.con) == np.sort(self.con_m)[:, :, None], axis=-1)
 
-        pm = np.array([1, -1])[:, None, None]
-
-        # define source points r' at centroids
+        # define source points r' at centroids (N, n, 3)
+        # rp = r + self.s*(rc[:, None] - r) if self.s else rc[:, None]
         rp = rc
+        p = np.random.choice(range(3), N)
+        # p = np.random.randint(0, 3, size=N)
+        rp = rc + 0.01*(r[range(N), p] - rc)
+
+        omega = self.k/np.sqrt(eps*mu)
+
+        # n = rp.shape[1]
+        # ind = np.stack(n*[ind], axis=-1).reshape((2, M, -1), order=self.order)
+        # dSp = np.stack(n*[dSp/n], axis=-1).reshape(-1, order=self.order)
+        # rp = rp.reshape((-1, 3), order=self.order)
 
         # rwg basis functions; compute displacement from face center to free rwg vertex (2 x M x N x 3)
-        rho = pm[..., None]*(rp - rm[..., [-1], :])
-        fm = 0.5 * (lm / Am)[..., None, None] * rho*ind[..., None]
+        rho = rp - rm[..., [-1], :]
+        fm = (ind*(lm/Am)[..., None])[..., None]*rho
 
         # rwg divergence (2 x M x N)
-        dfm = pm*(lm/Am)[..., None]*ind
+        dfm = ind*(lm/Am)[..., None]
 
         # interaction displacement vector (2 x M x M)
         Rm = np.linalg.norm(rmc[..., None, :] - rp, axis=-1)
 
         # Greens function (2 x M x n)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            G = np.exp(-1j * self.k * Rm) / Rm
-            G[np.isnan(G)] = 0
+        G = np.exp(-1j * self.k * Rm) / Rm
+        G[np.isnan(G)] = 0
 
-        # angular frequency
-        omega = self.k / np.sqrt(mu * eps)
-
-        Avec, phi = compute_potentials(fm, dfm, G * dSp, omega)
+        Avec, phi = compute_potentials(fm, dfm, G*dSp, omega)
 
         # centroid basis displacement rwg centroid to free vertex
         rhomc = pm * (rmc - rm[:, :, -1])
@@ -113,17 +129,25 @@ class MoM(PolyData):
         V = lm * np.sum(Emc * rhomc / 2, axis=(0, -1))
 
         # form impedance matrix
-        Z = lm * np.sum(1j * omega * np.sum(Avec * rhomc[..., None, :]/2,   axis=-1) + phi[0] - phi[1],
-                        axis=0)
+        Z = lm*(1j*omega*np.sum(
+            Avec * rhomc[:, :, None, :]/2,   axis=(0, -1)) + (phi[0] - phi[1]))
 
         # solve basis currents
-        I = gmres(cp.asarray(Z), cp.asarray(V))[0].get()
+        print('solving ...')
+        I, info = gmres(cp.asarray(Z), cp.asarray(V), tol=1e-9)
+        print(info)
+        I = I.get()
 
         # solve for unknown surface currents
-        self.J = np.sum(I[:, None, None] * fm, axis=(0, 1))
+        self.Jp = np.sum(I[:, None, None] * fm, axis=(0, 1))
 
-        J = self.J
-        J02 = np.linalg.norm(J, axis=-1) ** 2
+        # average about source points
+        J = self.Jp
+        # J = self.Jp.reshape(N, n, 3, order=self.order)
+        # J = np.mean(J, axis=1)
+
+        # Compute magnitude squared for plotting
+        J02 = np.linalg.norm(J, axis=-1)
 
         self.cell_data["Jr"] = J.real
         self.cell_data["Ji"] = J.imag
@@ -132,11 +156,15 @@ class MoM(PolyData):
 
         # store 2D data
         self.data = {
-            "$(r' \\in T_m^+) - (r' \\in T_m^-)$": ind[0].astype(int) - ind[1].astype(int),
-            "$R_m^\\pm$": np.sum(Rm, axis=0),
-            "$G_m(r')$": np.sum(G, 0),
-            "$A$": np.sum(np.linalg.norm(Avec, axis=-1), axis=0),
-            "$\\phi$": np.sum(phi, axis=0),
+            "$(r' \\in T_m^\\pm)$": np.sum(ind, axis=0),
+            "$R_m^+$": Rm[0],
+            "$R_m^-$": Rm[1],
+            "$G_m(r')^+$": G[0],
+            "$G_m(r')^-$": G[1],
+            "$A^+$": np.linalg.norm(Avec[0], axis=-1),
+            "$A^-$": np.linalg.norm(Avec[1], axis=-1),
+            "$\\phi^+$": phi[0],
+            "$\\phi^-$": phi[1],
             "Z": Z,
         }
 
@@ -169,7 +197,8 @@ class MoM(PolyData):
                 rn - rhomcn / 2, [str(x) for x in self.con_m[1]], text_color="blue")
 
         plotter.add_points(self.rp, render_points_as_spheres=True)
-        plotter.add_points(self.rc, render_points_as_spheres=True)
+        plotter.add_points(
+            self.rc, render_points_as_spheres=True, color='magenta')
 
         if lines:
             i, j, k = np.indices(self.Rm.shape)
@@ -201,78 +230,78 @@ class MoM(PolyData):
         plt.show()
 
 
-def setup_rwg_connectivity(con):
-    """compute rwg basis of v1, v2, vp and vn"""
+def area(u, v):
+    """compute area of triangle defined by vectors u and v"""
+    return 0.5 * np.linalg.norm(np.cross(u, v, axis=-1), axis=-1)
 
-    # construct edges from face connectivity (face x edge x point)
+
+def setup_rwg_connectivity(con):
+    """given trimesh connectivity con (N, 3), construct rwg basis of M unique internal edges"""
+
+    # construct edges from face connectivity (face x edge x point) (N, 3, 2)
     edges = con[:, [[0, 1], [1, 2], [2, 0]]]
 
-    # sort edges by points
-    sorted_edges = np.sort(edges, axis=-1)
+    # sort flattened edges by points (N x 3, 2)
+    sorted_edges = np.sort(edges.reshape(-1, 2))
 
-    # count uniqueness among flattened edges
-    unique_edges, counts = np.unique(
-        sorted_edges.reshape(-1, 2), axis=0, return_counts=True)
+    # count edge uniqueness
+    unique_edges, counts = np.unique(sorted_edges, axis=0, return_counts=True)
 
-    # (2 x M) define rwg basis of unique internal edges
+    # define rwg basis of unique internal edges (M, 2)
     internal_edges = unique_edges[counts == 2]
 
+    def get_free_vert(edge):
+        """find free vertex given edge (2,) in face edges (M, 3, 2)"""
+
+        # match edge to face
+        face = np.any(np.all(edge == edges, axis=-1), axis=-1)
+
+        # get face to points
+        points = np.unique(edges[face])
+
+        # find free vertex
+        vertex = np.setdiff1d(points, edge)
+
+        return int(vertex[0])
+
     # find free rwg vertices
-    free_vert_p = [get_free_vert(edge, edges) for edge in internal_edges]
-    free_vert_n = [get_free_vert(edge[::-1], edges) for edge in internal_edges]
+    vert_pos = np.array([get_free_vert(edge) for edge in internal_edges])
+    vert_neg = np.array([get_free_vert(edge[::-1]) for edge in internal_edges])
 
-    return internal_edges, np.array(free_vert_p), np.array(free_vert_n)
-
-
-def get_free_vert(edge, face_edges):
-    """find free vertex given edge in face edges"""
-
-    # match points to edges
-    ind = np.all(edge == face_edges, axis=-1)
-
-    # match edges to face
-    face = np.any(ind, axis=-1)
-
-    # get face to points
-    points = np.unique(face_edges[face])
-
-    # find free vertex
-    vertex = np.setdiff1d(points, edge)
-
-    return int(vertex[0])
+    return internal_edges, vert_pos, vert_neg
 
 
-def compute_potentials(F, dF, GdSp, omega):
+def compute_potentials(fm, dfm, GdSp, omega):
 
     print("computing potentials ...")
 
-    GdSp = cp.asarray(GdSp)
-    F = cp.asarray(F)
-    dF = cp.asarray(dF)
+    dF = cp.array(dfm)
+    F = cp.array(fm)
+    G = cp.array(GdSp)
 
     I = range(2)
     J = range(3)
 
     # compute vector potential (2 x M x M x 3)
-    Avec = [[GdSp[i] @ csr_matrix(F[i, ..., j].T) for i in I] for j in J]
+    # Avec = [[G[i] @ csr_matrix(F[i, ..., j].T) for i in I] for j in J]
+    Avec = [[G[i] @ F[i, ..., j].T for i in I] for j in J]
 
     # compute scalar potential (2 x M x M)
-    phi = [GdSp[i] @ csr_matrix(dF[i].T) for i in I]
+    # phi = [G[i] @ csr_matrix(dF[i].T) for i in I]
+    phi = [G[i] @ dF[i].T for i in I]
 
-    Avec = mu / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1)
-    phi = -1 / (4 * np.pi * 1j * omega * eps) * cp.array(phi)
+    Avec = mu/(4*np.pi)*cp.stack(cp.array(Avec), axis=-1).get()
+    phi = -1/(4*np.pi*1j*omega*eps)*cp.array(phi).get()
 
-    print("finished computing potentials !")
-
-    return Avec.get(), phi.get()
+    return Avec, phi
 
 
 if __name__ == "__main__":
 
     from glimmer import Gaussian, Mirror
 
-    src = Gaussian(w0=10, lam=3, num_lam=4, num_waist=2)
-    # src.rotate_z(5)
+    src = Gaussian(w0=10e-3, lam=299_792_458/95e9, num_lam=4, num_waist=2)
+    src.rotate_z(5)
     src.rotate_y(3)
 
     zR = np.pi * np.array(src.w0)**2 / src.lam
@@ -285,26 +314,15 @@ if __name__ == "__main__":
         "L": (src.num_waist * w, src.num_waist * w / c),
         "dL": src.lam / src.num_lam,
         "f": (s * c, s / c),
-        # "f": None,
     }
 
     m1 = Mirror(**options)
     m1.rotate_x(45)
-
     m1.translate([0, 0, s])
-    m1.round()
+
     src.radiate(m1)
 
-    m2 = Mirror(**options)
-    m2.rotate_x(-45)
-    m2.translate([0, 2*s, s])
-    m2.round()
-    # src.radiate(m2)
-
-    mom = MoM(
-        pec=m1,
-        # pec=m1+m2,
-        k=src.k)
+    mom = MoM(pec=m1, k=src.k)
 
     mom.plot_mesh()
 

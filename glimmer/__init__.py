@@ -314,6 +314,8 @@ class Mirror(Grid):
 
         super().__init__(x, y, z, **kwargs)
 
+        self.round()
+
 
 @dataclass
 class Problem:
