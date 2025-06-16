@@ -14,7 +14,7 @@ from pyvista import Plotter, PolyData, UnstructuredGrid
 eta = 377
 
 # c = 3e8
-mu = 4e-7*np.pi
+mu = 4e-7 * np.pi
 eps = 8.854e-12
 
 # eta = np.sqrt(mu/eps)
@@ -29,7 +29,7 @@ class MoM(PolyData):
     # s: float = 0.5
     s: float = None
 
-    order: str = 'C'
+    order: str = "C"
 
     def __post_init__(self):
 
@@ -52,9 +52,12 @@ class MoM(PolyData):
         edges, vp, vn = setup_rwg_connectivity(self.con)
 
         # define rwg basis connectivity
-        self.con_m = np.stack([
-            np.stack([edges[:, 0], edges[:, 1], vp], axis=-1),
-            np.stack([edges[:, 1], edges[:, 0], vn], axis=-1)])
+        self.con_m = np.stack(
+            [
+                np.stack([edges[:, 0], edges[:, 1], vp], axis=-1),
+                np.stack([edges[:, 1], edges[:, 0], vn], axis=-1),
+            ]
+        )
 
         # face vertices (N x 3 x 3)
         r = self.points[self.con]
@@ -89,17 +92,16 @@ class MoM(PolyData):
         pm = np.array([1, -1])[:, None, None]
 
         # match con to rwg connectivity (2 x M x N)
-        ind = pm*np.all(
-            np.sort(self.con) == np.sort(self.con_m)[:, :, None], axis=-1)
+        ind = pm * np.all(np.sort(self.con) == np.sort(self.con_m)[:, :, None], axis=-1)
 
         # define source points r' at centroids (N, n, 3)
         # rp = r + self.s*(rc[:, None] - r) if self.s else rc[:, None]
         rp = rc
         p = np.random.choice(range(3), N)
         # p = np.random.randint(0, 3, size=N)
-        rp = rc + 0.01*(r[range(N), p] - rc)
+        rp = rc + 0.01 * (r[range(N), p] - rc)
 
-        omega = self.k/np.sqrt(eps*mu)
+        omega = self.k / np.sqrt(eps * mu)
 
         # n = rp.shape[1]
         # ind = np.stack(n*[ind], axis=-1).reshape((2, M, -1), order=self.order)
@@ -108,10 +110,10 @@ class MoM(PolyData):
 
         # rwg basis functions; compute displacement from face center to free rwg vertex (2 x M x N x 3)
         rho = rp - rm[..., [-1], :]
-        fm = (ind*(lm/Am)[..., None])[..., None]*rho
+        fm = (ind * (lm / Am)[..., None])[..., None] * rho
 
         # rwg divergence (2 x M x N)
-        dfm = ind*(lm/Am)[..., None]
+        dfm = ind * (lm / Am)[..., None]
 
         # interaction displacement vector (2 x M x M)
         Rm = np.linalg.norm(rmc[..., None, :] - rp, axis=-1)
@@ -120,7 +122,7 @@ class MoM(PolyData):
         G = np.exp(-1j * self.k * Rm) / Rm
         G[np.isnan(G)] = 0
 
-        Avec, phi = compute_potentials(fm, dfm, G*dSp, omega)
+        Avec, phi = compute_potentials(fm, dfm, G * dSp, omega)
 
         # centroid basis displacement rwg centroid to free vertex
         rhomc = pm * (rmc - rm[:, :, -1])
@@ -129,11 +131,13 @@ class MoM(PolyData):
         V = lm * np.sum(Emc * rhomc / 2, axis=(0, -1))
 
         # form impedance matrix
-        Z = lm*(1j*omega*np.sum(
-            Avec * rhomc[:, :, None, :]/2,   axis=(0, -1)) + (phi[0] - phi[1]))
+        Z = lm * (
+            1j * omega * np.sum(Avec * rhomc[:, :, None, :] / 2, axis=(0, -1))
+            + (phi[0] - phi[1])
+        )
 
         # solve basis currents
-        print('solving ...')
+        print("solving ...")
         I, info = gmres(cp.asarray(Z), cp.asarray(V), tol=1e-9)
         print(info)
         I = I.get()
@@ -174,7 +178,7 @@ class MoM(PolyData):
         self.rc = rc
         self.rmc = rmc
 
-    def plot_mesh(self, faces=False, basis_functions=False,  lines=False):
+    def plot_mesh(self, faces=False, basis_functions=False, lines=False):
 
         plotter = Plotter()
         plotter.add_mesh(self, scalars="|J|^2", show_edges=True)
@@ -192,18 +196,20 @@ class MoM(PolyData):
             plotter.add_arrows(rn - rhomcn, rhomcn, color="blue")
 
             plotter.add_point_labels(
-                rp + rhomcp / 2, [str(x) for x in self.con_m[0]], text_color="red")
+                rp + rhomcp / 2, [str(x) for x in self.con_m[0]], text_color="red"
+            )
             plotter.add_point_labels(
-                rn - rhomcn / 2, [str(x) for x in self.con_m[1]], text_color="blue")
+                rn - rhomcn / 2, [str(x) for x in self.con_m[1]], text_color="blue"
+            )
 
         plotter.add_points(self.rp, render_points_as_spheres=True)
-        plotter.add_points(
-            self.rc, render_points_as_spheres=True, color='magenta')
+        plotter.add_points(self.rc, render_points_as_spheres=True, color="magenta")
 
         if lines:
             i, j, k = np.indices(self.Rm.shape)
             lines = plotter.add_lines(
-                lines=np.stack([self.rp[k], self.rmc[i, j]]).reshape(-1, 3, order='F'), width=0.1,
+                lines=np.stack([self.rp[k], self.rmc[i, j]]).reshape(-1, 3, order="F"),
+                width=0.1,
             )
 
         plotter.enable_parallel_projection()
@@ -290,21 +296,21 @@ def compute_potentials(fm, dfm, GdSp, omega):
     # phi = [G[i] @ csr_matrix(dF[i].T) for i in I]
     phi = [G[i] @ dF[i].T for i in I]
 
-    Avec = mu/(4*np.pi)*cp.stack(cp.array(Avec), axis=-1).get()
-    phi = -1/(4*np.pi*1j*omega*eps)*cp.array(phi).get()
+    Avec = mu / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1).get()
+    phi = -1 / (4 * np.pi * 1j * omega * eps) * cp.array(phi).get()
 
     return Avec, phi
 
 
-if __name__ == "__main__":
-
+def demo():
+    """run EFIE MoM RWG solver demo problem"""
     from glimmer import Gaussian, Mirror
 
-    src = Gaussian(w0=10e-3, lam=299_792_458/95e9, num_lam=4, num_waist=2)
+    src = Gaussian(w0=10e-3, lam=299_792_458 / 95e9, num_lam=4, num_waist=2)
     src.rotate_z(5)
     src.rotate_y(3)
 
-    zR = np.pi * np.array(src.w0)**2 / src.lam
+    zR = np.pi * np.array(src.w0) ** 2 / src.lam
 
     s = zR / 4
     c = np.cos(np.pi / 4)
@@ -327,3 +333,8 @@ if __name__ == "__main__":
     mom.plot_mesh()
 
     mom.show_charts()
+
+
+if __name__ == "__main__":
+
+    demo()
