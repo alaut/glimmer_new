@@ -4,6 +4,10 @@ from dataclasses import dataclass
 import numpy as np
 import cupy as cp
 
+mu = 4e-7 * np.pi
+eps = 8.854e-12
+eta = np.sqrt(mu / eps)
+
 
 def unpack(f):
 
