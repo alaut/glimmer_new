@@ -10,14 +10,7 @@ from cupyx.scipy.sparse.linalg import gmres
 
 
 from pyvista import Plotter, PolyData, UnstructuredGrid
-
-eta = 377
-
-# c = 3e8
-mu = 4e-7 * np.pi
-eps = 8.854e-12
-
-# eta = np.sqrt(mu/eps)
+from glimmer import eps, mu, eta
 
 
 @dataclass
@@ -95,21 +88,17 @@ class MoM(PolyData):
         ind = pm * np.all(np.sort(self.con) == np.sort(self.con_m)[:, :, None], axis=-1)
 
         # define source points r' at centroids (N, n, 3)
-        # rp = r + self.s*(rc[:, None] - r) if self.s else rc[:, None]
-        rp = rc
-        p = np.random.choice(range(3), N)
-        # p = np.random.randint(0, 3, size=N)
-        rp = rc + 0.01 * (r[range(N), p] - rc)
+        rp = r + self.s * (rc[:, None] - r) if self.s else rc[:, None, :]
 
         omega = self.k / np.sqrt(eps * mu)
 
-        # n = rp.shape[1]
-        # ind = np.stack(n*[ind], axis=-1).reshape((2, M, -1), order=self.order)
-        # dSp = np.stack(n*[dSp/n], axis=-1).reshape(-1, order=self.order)
-        # rp = rp.reshape((-1, 3), order=self.order)
+        n = rp.shape[1]
+        ind = np.stack(n * [ind], axis=-1).reshape((2, M, -1), order=self.order)
+        dSp = np.stack(n * [dSp / n], axis=-1).reshape(-1, order=self.order)
+        rp = rp.reshape((-1, 3), order=self.order)
 
         # rwg basis functions; compute displacement from face center to free rwg vertex (2 x M x N x 3)
-        rho = rp - rm[..., [-1], :]
+        rho = rp - rm[..., -1, :][..., None, :]
         fm = (ind * (lm / Am)[..., None])[..., None] * rho
 
         # rwg divergence (2 x M x N)
@@ -120,7 +109,7 @@ class MoM(PolyData):
 
         # Greens function (2 x M x n)
         G = np.exp(-1j * self.k * Rm) / Rm
-        G[np.isnan(G)] = 0
+        G[np.nonzero(Rm == 0)] = 0
 
         Avec, phi = compute_potentials(fm, dfm, G * dSp, omega)
 
@@ -138,17 +127,14 @@ class MoM(PolyData):
 
         # solve basis currents
         print("solving ...")
-        I, info = gmres(cp.asarray(Z), cp.asarray(V), tol=1e-9)
-        print(info)
+        I, info = gmres(cp.asarray(Z), cp.asarray(V))
         I = I.get()
 
         # solve for unknown surface currents
         self.Jp = np.sum(I[:, None, None] * fm, axis=(0, 1))
 
         # average about source points
-        J = self.Jp
-        # J = self.Jp.reshape(N, n, 3, order=self.order)
-        # J = np.mean(J, axis=1)
+        J = np.mean(np.reshape(self.Jp, (N, n, 3), order=self.order), axis=1)
 
         # Compute magnitude squared for plotting
         J02 = np.linalg.norm(J, axis=-1)
@@ -163,6 +149,7 @@ class MoM(PolyData):
             "$(r' \\in T_m^\\pm)$": np.sum(ind, axis=0),
             "$R_m^+$": Rm[0],
             "$R_m^-$": Rm[1],
+            "R_m==0": np.any(Rm == 0, axis=0),
             "$G_m(r')^+$": G[0],
             "$G_m(r')^-$": G[1],
             "$A^+$": np.linalg.norm(Avec[0], axis=-1),
@@ -181,7 +168,12 @@ class MoM(PolyData):
     def plot_mesh(self, faces=False, basis_functions=False, lines=False):
 
         plotter = Plotter()
-        plotter.add_mesh(self, scalars="|J|^2", show_edges=True)
+        plotter.add_mesh(
+            self,
+            #  scalars="Jr",
+            scalars="|J|^2",
+            show_edges=True,
+        )
 
         rp, rn = self.rm[:, :, -1]
 
@@ -281,20 +273,16 @@ def compute_potentials(fm, dfm, GdSp, omega):
 
     print("computing potentials ...")
 
-    dF = cp.array(dfm)
-    F = cp.array(fm)
+    dF = cp.array(dfm).transpose(0, 2, 1)
+    F = cp.array(fm).transpose(0, 2, 1, 3)
     G = cp.array(GdSp)
 
     I = range(2)
     J = range(3)
 
-    # compute vector potential (2 x M x M x 3)
-    # Avec = [[G[i] @ csr_matrix(F[i, ..., j].T) for i in I] for j in J]
-    Avec = [[G[i] @ F[i, ..., j].T for i in I] for j in J]
+    Avec = [[G[i] @ csr_matrix(F[i, ..., j]) for i in I] for j in J]
 
-    # compute scalar potential (2 x M x M)
-    # phi = [G[i] @ csr_matrix(dF[i].T) for i in I]
-    phi = [G[i] @ dF[i].T for i in I]
+    phi = [G[i] @ csr_matrix(dF[i]) for i in I]
 
     Avec = mu / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1).get()
     phi = -1 / (4 * np.pi * 1j * omega * eps) * cp.array(phi).get()
@@ -306,7 +294,7 @@ def demo():
     """run EFIE MoM RWG solver demo problem"""
     from glimmer import Gaussian, Mirror
 
-    src = Gaussian(w0=10e-3, lam=299_792_458 / 95e9, num_lam=4, num_waist=2)
+    src = Gaussian(w0=10e-3, lam=3e8 / 95e9, num_lam=3, num_waist=2)
     src.rotate_z(5)
     src.rotate_y(3)
 
@@ -324,11 +312,12 @@ def demo():
 
     m1 = Mirror(**options)
     m1.rotate_x(45)
+    m1.rotate_z(3)
     m1.translate([0, 0, s])
 
     src.radiate(m1)
 
-    mom = MoM(pec=m1, k=src.k)
+    mom = MoM(pec=m1, k=src.k, s=0.5)
 
     mom.plot_mesh()
 
