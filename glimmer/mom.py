@@ -277,16 +277,13 @@ def compute_potentials(fm, dfm, GdSp, omega):
 
     print("computing potentials ...")
 
-    dF = cp.array(dfm).transpose(0, 2, 1)
-    F = cp.array(fm).transpose(0, 2, 1, 3)
-    G = cp.array(GdSp)
+    dFpn = cp.array(dfm).transpose(0, 2, 1)
+    Fpn = cp.array(fm).transpose(0, 2, 1, 3)
+    Gmp = cp.array(GdSp)
 
-    I = range(2)
-    J = range(3)
+    Avec = [[Gmp[i] @ csr_matrix(Fpn[i, ..., j]) for i in range(2)] for j in range(3)]
 
-    Avec = [[G[i] @ csr_matrix(F[i, ..., j]) for i in I] for j in J]
-
-    phi = [G[i] @ csr_matrix(dF[i]) for i in I]
+    phi = [Gmp[i] @ csr_matrix(dFpn[i]) for i in range(2)]
 
     Avec = mu / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1).get()
     phi = -1 / (4 * np.pi * 1j * omega * eps) * cp.array(phi).get()
