@@ -1,3 +1,4 @@
+import quadpy
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 
@@ -5,9 +6,7 @@ import numpy as np
 import cupy as cp
 
 from cupyx.scipy.sparse import csr_matrix
-
 from cupyx.scipy.sparse.linalg import gmres
-
 
 from pyvista import Plotter, PolyData, UnstructuredGrid
 from glimmer import eps, mu, eta
@@ -19,10 +18,9 @@ class MoM(PolyData):
     k: float
     pec: UnstructuredGrid
 
-    # s: float = 0.5
-    s: float = None
-
     order: str = "C"
+    rmin: float = 1e-3
+    deg: int = 4
 
     def __post_init__(self):
 
@@ -79,7 +77,7 @@ class MoM(PolyData):
         Emc = np.mean(Em, axis=-2)
 
         # areas of faces (N)
-        dSp = area(r[:, 1] - r[:, 0], r[:, 2] - r[:, 0])
+        dS = area(r[:, 1] - r[:, 0], r[:, 2] - r[:, 0])
 
         # define plus/minus modifier (used to correct rho vector orientation)
         pm = np.array([1, -1])[:, None, None]
@@ -87,14 +85,18 @@ class MoM(PolyData):
         # match con to rwg connectivity (2 x M x N)
         ind = pm * np.all(np.sort(self.con) == np.sort(self.con_m)[:, :, None], axis=-1)
 
-        # define source points r' at centroids (N, n, 3)
-        rp = r + self.s * (rc[:, None] - r) if self.s else rc[:, None, :]
+        # define source points r' at by quadrature (N, n, 3)
+        scheme = quadpy.t2.get_good_scheme(self.deg)
+        rp = np.sum(r[..., None, :] * scheme.points[..., None], axis=1)
+        dSp = dS[:, None] * scheme.weights
 
+        # define angular frequency
         omega = self.k / np.sqrt(eps * mu)
 
+        # reduce dimensionality of integration points
         n = rp.shape[1]
         ind = np.stack(n * [ind], axis=-1).reshape((2, M, -1), order=self.order)
-        dSp = np.stack(n * [dSp / n], axis=-1).reshape(-1, order=self.order)
+        dSp = dSp.reshape(-1, order=self.order)
         rp = rp.reshape((-1, 3), order=self.order)
 
         # rwg basis functions; compute displacement from face center to free rwg vertex (2 x M x N x 3)
@@ -109,7 +111,7 @@ class MoM(PolyData):
 
         # Greens function (2 x M x n)
         G = np.exp(-1j * self.k * Rm) / Rm
-        G[np.nonzero(Rm == 0)] = 0
+        G[Rm < self.rmin] = 0
 
         Avec, phi = compute_potentials(fm, dfm, G * dSp, omega)
 
@@ -133,8 +135,10 @@ class MoM(PolyData):
         # solve for unknown surface currents
         self.Jp = np.sum(I[:, None, None] * fm, axis=(0, 1))
 
-        # average about source points
-        J = np.mean(np.reshape(self.Jp, (N, n, 3), order=self.order), axis=1)
+        # integrate sources
+        J = np.sum(
+            np.reshape(self.Jp * dSp[:, None], (N, n, 3), order=self.order), axis=1
+        )
 
         # Compute magnitude squared for plotting
         J02 = np.linalg.norm(J, axis=-1)
@@ -195,7 +199,7 @@ class MoM(PolyData):
             )
 
         plotter.add_points(self.rp, render_points_as_spheres=True)
-        plotter.add_points(self.rc, render_points_as_spheres=True, color="magenta")
+        # plotter.add_points(self.rc, render_points_as_spheres=True, color="magenta")
 
         if lines:
             i, j, k = np.indices(self.Rm.shape)
@@ -317,7 +321,7 @@ def demo():
 
     src.radiate(m1)
 
-    mom = MoM(pec=m1, k=src.k, s=0.5)
+    mom = MoM(pec=m1, k=src.k)
 
     mom.plot_mesh()
 
