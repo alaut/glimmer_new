@@ -388,7 +388,6 @@ class Problem:
         self.actors = [(obj, add_object(obj)) for obj in objects]
 
         self.plotter.enable_parallel_projection()
-        self.plotter.add_axes_at_origin()
         self.plotter.show_grid()
 
         self.plotter.add_key_event("u", self.update_scene)
