@@ -9,7 +9,9 @@ from cupyx.scipy.sparse import csr_matrix
 from cupyx.scipy.sparse.linalg import gmres
 
 from pyvista import Plotter, PolyData, UnstructuredGrid
-from glimmer import eps, mu, eta
+
+
+from scipy.constants import epsilon_0, mu_0
 
 
 @dataclass
