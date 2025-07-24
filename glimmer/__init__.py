@@ -3,7 +3,7 @@ from pyvista import StructuredGrid, Plotter
 from dataclasses import dataclass
 import numpy as np
 
-from glimmer.tools import StrattonChu, EH_Gaussian
+from glimmer.chu import StrattonChu, EH_Gaussian
 
 
 def unpack(f):
