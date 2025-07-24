@@ -2,11 +2,8 @@ import os
 from pyvista import StructuredGrid, Plotter
 from dataclasses import dataclass
 import numpy as np
-import cupy as cp
 
-from scipy.constants import mu_0, epsilon_0
-
-eta = np.sqrt(mu_0 / epsilon_0)
+from glimmer.tools import StrattonChu, EH_Gaussian
 
 
 def unpack(f):
@@ -37,50 +34,6 @@ def logclip(A0, clip=99.5, dBmin=-30):
         A0dB = np.clip(10 * np.log10(A0 / Amax), dBmin, 0)
 
     return A0, A0dB
-
-
-def StrattonChu(r1, E1, H1, k1, r2, mode="radiate", eta=377, num=5):
-
-    E1 = cp.asarray(E1)
-    H1 = cp.asarray(H1)
-
-    drdu, drdv = cp.gradient(r1, axis=(0, 1))
-    dSvec = cp.cross(drdv, drdu, axis=-1)
-
-    dS1 = cp.linalg.norm(dSvec, axis=-1, keepdims=True)
-    n1 = dSvec / dS1
-
-    match mode:
-        case "reflect":
-            E1 = 2 * cp.sum(E1 * n1, axis=-1, keepdims=True) * n1 - E1
-            H1 = H1 - 2 * cp.sum(H1 * n1, axis=-1, keepdims=True) * n1
-        case "negate":
-            E1 = -E1
-            H1 = -H1
-
-    r = cp.asarray(r2[..., None, None, None, :] - r1)
-
-    R = cp.linalg.norm(r, axis=-1, keepdims=True)
-
-    G = cp.exp(1j * k1 * R) / (4 * cp.pi * R)
-    dG = r / R * G * (1 / R - 1j * k1)
-
-    nxH = cp.cross(n1, H1, axis=-1)
-    nxE = cp.cross(n1, E1, axis=-1)
-
-    n_dot_E = cp.sum(n1 * E1, axis=-1, keepdims=True)
-    n_dot_H = cp.sum(n1 * H1, axis=-1, keepdims=True)
-
-    dE = cp.cross(nxE, dG, axis=-1) + 1j * k1 * nxH * G * eta + n_dot_E * dG
-    dH = cp.cross(nxH, dG, axis=-1) - 1j * k1 * nxE * G / eta + n_dot_H * dG
-
-    dE[R[..., 0] < 1 / k1 / num] = cp.nan
-    dH[R[..., 0] < 1 / k1 / num] = cp.nan
-
-    E2 = cp.nansum(dS1 * dE, axis=(-4, -3, -2)).get()
-    H2 = cp.nansum(dS1 * dH, axis=(-4, -3, -2)).get()
-
-    return E2, H2
 
 
 class Grid(StructuredGrid):
@@ -157,7 +110,7 @@ class Grid(StructuredGrid):
             **kwargs,
         )
 
-    def radiate(self, other, mode="radiate"):
+    def radiate(self, other: StructuredGrid, mode="radiate"):
 
         print(
             f"{mode} {self.__repr__()} onto {other.chunks} chunks of {other.__repr__()}"
@@ -272,7 +225,6 @@ class Gaussian(Grid):
     num_waist: float = 3
 
     P0: float = 1
-    Z0: float = 377
 
     def __post_init__(self):
 
@@ -282,16 +234,11 @@ class Gaussian(Grid):
 
         x, y = span((wx * self.num_waist, wy * self.num_waist), self.lam / self.num_lam)
 
-        super().__init__(*np.broadcast_arrays(x, y, 0))
+        x, y, z = np.broadcast_arrays(x, y, 0)
 
-        x = self.points_matrix[..., 0]
-        y = self.points_matrix[..., 1]
+        super().__init__(x, y, z)
 
-        I0 = 2 * self.P0 / (np.pi * wx * wy)
-        A = (I0 * self.Z0) ** 0.5 * np.exp(-(x**2) / wx**2 - y**2 / wy**2)
-
-        E = A[..., None] * np.array([1, 0, 0])
-        H = A[..., None] * np.array([0, 1, 0]) / self.Z0
+        E, H = EH_Gaussian(self.points_matrix, wx=wx, wy=wy)
 
         self.set_fields(E, H)
 
