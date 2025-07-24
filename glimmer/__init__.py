@@ -123,9 +123,9 @@ class Grid(StructuredGrid):
         )
 
         inputs = {
-            "r1": self.points_matrix,
-            "E1": E1,
-            "H1": H1,
+            "r1": self.points_matrix[..., 0, :],
+            "E1": E1[..., 0, :],
+            "H1": H1[..., 0, :],
             "k1": self.k,
             "mode": mode,
         }

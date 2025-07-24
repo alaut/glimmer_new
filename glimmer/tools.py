@@ -19,9 +19,9 @@ def norm(A):
 
 def StrattonChu(r1, E1, H1, k1, r2, mode="radiate"):
 
-    r1 = cp.asarray(r1[..., 0, :])
-    E1 = cp.asarray(E1[..., 0, :])
-    H1 = cp.asarray(H1[..., 0, :])
+    r1 = cp.asarray(r1)
+    E1 = cp.asarray(E1)
+    H1 = cp.asarray(H1)
     r2 = cp.asarray(r2)
 
     drdu, drdv = cp.gradient(r1, axis=(0, 1))
