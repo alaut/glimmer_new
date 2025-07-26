@@ -31,11 +31,11 @@ $$n \times (E - j \omega A - \nabla \phi) = 0$$
 
 where
 
-$$A = \mu \oint JG \quad \phi = \frac{1}{\epsilon}\oint\sigma G \qquad  \quad \nabla \cdot J = -j \omega \sigma $$
+$$A = \mu \oint JGdS \quad \phi = \frac{1}{\epsilon}\oint\sigma GdS \qquad  \quad \nabla \cdot J = -j \omega \sigma $$
 
 and
 
-$$G = \frac{\exp(-i k R)}{4\pi R} \qquad R = |r-r'|$$
+$$G = \frac{e^{-i k R}}{4\pi R} \qquad R = |r-r'|$$
 letting
 
 $$\omega\epsilon = \frac{k}{\eta} \quad \omega \mu = \eta k$$
@@ -46,21 +46,19 @@ $$\boxed{n \times E = n \times i k \eta \oint (JG + \frac{1}{k^2}\nabla'\cdot J 
 
 Presume we are dealing with arbitrary surfaces modeled by triangular patches
 
-![Arbitrary surface modeled by triangular patches](trimesh.png)
+![Arbitrary surface modeled by triangular patches](./figs/trimesh.png)
 
 we can then develop a basis function associated to each interior edge that vanishes everwhere on S except within the two triangles attached to that edge
 
-![Triangle pair and geometrical parameters associated with interior edge](rwg.png)
+![Triangle pair and geometrical parameters associated with interior edge](./figs/rwg.png)
 
 The vector basis is defined as
 
-$$f_n(r) = \begin{cases} \frac{l_n}{2A_n^+}(r-r^+), r \in T_n^+\\
-\frac{l_n}{2A_n^-}(r-r_n^-), r \in T_n^-    
-\end{cases}$$
+$$f_n^\pm(r) =  \pm \frac{l_n}{2A_n^\pm}(r-r^\pm) \mid r \in T_n^\pm $$
 
 The surface divergence is given by
 
-$$\nabla \cdot f_n = \begin{cases} +\frac{l_n}{A_n^+}, r \in T_n^+\\ -\frac{l_n}{A_n^-}, r \in T_n^- \end{cases}$$
+$$\nabla \cdot f_n^\pm(r) = \pm\frac{l_n}{A_n^\pm} \mid r\in T_n^\pm$$
 
 The currents are therefore approximated by summing current contributions over the edge basis n
 
@@ -78,11 +76,115 @@ where
 
 $$V = \frac{l}{2}(E^+\cdot \rho^+ + E^-\cdot\rho^-)$$
 
-$$A = \mu \oint f_n(r')G(R_m)dS'$$
+$$A = \mu \oint f_n(r')G(R_m^\pm)dS'$$
 
-$$R_m = |r_m^c\pm-r'$$
+
+$$\phi = \frac{j}{\omega\epsilon}\oint\nabla'\cdot f_n(r') G(R_m^\pm)dS'$$
+
+$$R_m^\pm = |r_m^{c\pm}-r'|$$
 
 # References
 
 1. S. Rao, D. Wilton, and A. Glisson, “Electromagnetic scattering by surfaces of arbitrary shape,” IEEE Trans. Antennas Propagat., vol. 30, no. 3, pp. 409–418, May 1982, doi: 10.1109/TAP.1982.1142818.
 2. C. J. Bouwkamp, “Diffraction Theory,” Rep. Prog. Phys., vol. 17, no. 1, pp. 35–100, Jan. 1954, doi: 10.1088/0034-4885/17/1/302.
+3. P. Rabinowitz and N. Richter, “Perfectly Symmetric Two-Dimensional Integration Formulas with Minimal Numbers of Points,” Mathematics of Computation, vol. 23, no. 108, p. 765, Oct. 1969, doi: 10.2307/2004962.
+
+
+
+# from the paper
+
+$$\mathbf{f}_n(\mathbf{r}) = \begin{cases} \frac{l_n}{2A_n^+} \rho_n^+, & \mathbf{r} \in T_n^+ \\ -\frac{l_n}{2A_n^-} \rho_n^-, & \mathbf{r} \in T_n^- \\ 0, & \text{otherwise} \end{cases}$$
+
+$$\nabla_s \cdot \mathbf{f}_n = \begin{cases} \frac{l_n}{A_n^+}, & \mathbf{r} \in T_n^+ \\ -\frac{l_n}{A_n^-}, & \mathbf{r} \in T_n^- \\ 0, & \text{otherwise} \end{cases}$$
+
+$$ \mathbf{J} \approx \sum_{n=1}^{N} I_n \mathbf{f}_n(\mathbf{r}) $$
+
+$$Z_{mn} = l_m \left[ j\omega \left( \mathbf{A}_{mn}^+ \cdot \frac{\rho_m^{c+}}{2} + \mathbf{A}_{mn}^- \cdot \frac{\rho_m^{c-}}{2} \right) + (\Phi_{mn}^- - \Phi_{mn}^+) \right]$$
+
+$$V_m = l_m \left( \mathbf{E}_m^+ \cdot \frac{\rho_m^{c+}}{2} + \mathbf{E}_m^- \cdot \frac{\rho_m^{c-}}{2} \right)$$
+
+$$\mathbf{A}_{mn}^\pm = \frac{\mu}{4\pi} \int_S \mathbf{f}_n(\mathbf{r}') \frac{e^{-jk R_m^\pm}}{R_m^\pm} \, dS'$$
+
+$$\Phi_{mn}^\pm = -\frac{1}{4\pi j \omega \epsilon} \int_S \nabla_s' \cdot \mathbf{f}_n(\mathbf{r}') \frac{e^{-jk R_m^\pm}}{R_m^\pm} \, dS'$$
+
+$$R_m^\pm = |\mathbf{r}_m^{c\pm} - \mathbf{r}'|$$
+
+$$\mathbf{E}_m^\pm = \mathbf{E}^i(\mathbf{r}_m^{c\pm})$$
+
+
+
+# the next section
+ 
+
+$$\rho_i = \pm (\mathbf{r}' - \mathbf{r}_i), \quad i = 1, 2, 3$$
+
+$$\mathbf{A}_{pq} = \frac{\mu l_i}{4\pi} \int_{T_q} \left( \frac{l_i}{2A_q} \right) \rho_i \cdot \frac{e^{-jk R^P}}{R^P} \, dS'$$
+
+$$\Phi_{pq} = -\frac{1}{4\pi j \omega \epsilon} \int_{T_q} \left( \frac{l_i}{A_q} \right) \frac{e^{-jk R^P}}{R^P} \, dS'$$
+
+$$R^P = |\mathbf{r}^{cP} - \mathbf{r}'|$$
+
+$$s = \frac{A_1}{A}, \quad \eta = \frac{A_2}{A}, \quad \xi = \frac{A_3}{A}$$
+
+$$\xi + \eta + \xi = 1$$
+
+$$\mathbf{r}' = \xi \mathbf{r}_1 + \eta \mathbf{r}_2 + \xi \mathbf{r}_3$$
+
+$$\mathbf{A}_{pq} = \pm \frac{\mu l_i}{4\pi} (\mathbf{r}_1 I_{\xi}^{pq} + \mathbf{r}_2 I_{\eta}^{pq} + \mathbf{r}_3 I_{\xi}^{pq} - \mathbf{r}' I_{pq})$$
+
+$$\Phi_{pq} = \pm \frac{l_i}{j 2\pi \omega \epsilon} I_{pq}$$
+
+$$I_{pq} = \int_0^1 \int_0^{1-\eta} \frac{e^{-jk R^P}}{R^P} \, d\xi \, d\eta$$
+
+$$I_{\xi}^{pq} = \int_0^1 \int_0^{1-\eta} \xi \frac{e^{-jk R^P}}{R^P} \, d\xi \, d\eta$$
+
+$$I_{\eta}^{pq} = \int_0^1 \int_0^{1-\eta} \eta \frac{e^{-jk R^P}}{R^P} \, d\xi \, d\eta$$
+
+$$I_{\xi}^{pq} = I_{pq} - I_{\xi}^{pq} - I_{\eta}^{pq}$$
+
+$$\xi + \eta + \zeta = 1$$
+
+$$\mathbf{r}' = \xi \mathbf{r}_1 + \eta \mathbf{r}_2 + \xi \mathbf{r}_3$$
+
+## RWG Basis
+
+$$f_n(r) = \pm \frac{l_n}{2A_n^\pm}(r-r_n^\pm) \qquad r \in T_m^\pm$$
+
+$$\nabla \cdot f_n(r) = \pm \frac{l_n}{A_n^\pm} \qquad r \in T_m^\pm$$
+
+## Equations
+
+![](image.png)
+
+
+$$Z_{mm} = E_m [ j\omega ( A^+_{mn} * c^+_m / 2 + A^-_{mn} * c^-_m / 2 ) + \phi^+_{mn} - \phi^-_{mn} ]$$
+
+$$V_m = E_m ( E^+_{mn} * c^+_m / 2 + E^-_{mn} * c^-_m / 2 )$$
+
+$$A^+_{mn} = (\mu / 4\pi) \int_S F_n(r') e^{-j k R^+_m} dS'$$
+
+$$\phi^+_{mn} = - (1 / 4\pi j \omega \varepsilon) \int_S \nabla'_s * F_n(r') e^{-j k R^+_m} dS'$$
+
+$$R^+_m = | r^+_m - r' |$$
+
+```
+        if False:
+            # rp = rc + (r[:, 0] - rc)/10
+            # self.rp = self.rc + (self.r[0] - self.rc) / 10
+            # rp = rc[:, None, :] + (r - rc[:, None, :]) / 10
+            # self.rp = self.rc + self.rhomc[0]/2
+            # self.rp = (self.rc + self.r) / 2
+
+            rp = np.stack([
+                rc + (r[:, 0] - rc)/10,
+                rc + (r[:, 1] - rc)/10,
+                rc + (r[:, 2] - rc)/10])
+
+            dSp = np.stack([dSp / 3, dSp / 3, dSp / 3])
+            ind = np.stack([ind, ind, ind], axis=-2)
+
+            # reshape to maintain dimensionality of integration points
+            rp = rp.reshape(-1, 3, order="F")
+            dSp = dSp.reshape(-1, order="F")
+            ind = ind.reshape(ind.shape[0], ind.shape[1], -1, order="F")
+```
