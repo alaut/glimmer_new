@@ -90,7 +90,7 @@ $$R_m^\pm = |r_m^{c\pm}-r'|$$
 3. P. Rabinowitz and N. Richter, “Perfectly Symmetric Two-Dimensional Integration Formulas with Minimal Numbers of Points,” Mathematics of Computation, vol. 23, no. 108, p. 765, Oct. 1969, doi: 10.2307/2004962.
 
 
-
+<!-- 
 # from the paper
 
 $$\mathbf{f}_n(\mathbf{r}) = \begin{cases} \frac{l_n}{2A_n^+} \rho_n^+, & \mathbf{r} \in T_n^+ \\ -\frac{l_n}{2A_n^-} \rho_n^-, & \mathbf{r} \in T_n^- \\ 0, & \text{otherwise} \end{cases}$$
@@ -187,4 +187,4 @@ $$R^+_m = | r^+_m - r' |$$
             rp = rp.reshape(-1, 3, order="F")
             dSp = dSp.reshape(-1, order="F")
             ind = ind.reshape(ind.shape[0], ind.shape[1], -1, order="F")
-```
+``` -->
