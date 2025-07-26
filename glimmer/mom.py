@@ -13,6 +13,7 @@ import pyvista as pv
 
 from scipy.constants import epsilon_0, mu_0, c, milli, giga
 from glimmer.rwg import setup_rwg_connectivity
+from glimmer.chu import dot, cross, norm
 
 pv.global_theme.colorbar_orientation = "vertical"
 
@@ -129,12 +130,13 @@ class MoM(pv.PolyData):
         print("forming excitation vector ...")
         self.V = self.lm * np.sum(self.Emc * self.rhomc / 2, axis=(0, -1))
 
+        # fix
         print("forming impedance matrix ...")
         self.Z = self.lm * (
             1j
             * self.omega
             * np.sum(self.Avec * self.rhomc[:, :, None, :] / 2, axis=(0, -1))
-            + (self.phi[0] - self.phi[1])
+            - (self.phi[1] - self.phi[0])
         )
 
     def define_basis_functions(self):
@@ -191,8 +193,12 @@ class MoM(pv.PolyData):
 
         print("plotting currents ...")
 
+        factor = milli / np.max(np.linalg.norm(self["Jr"], axis=-1))
+
         plotter = pv.Plotter()
         plotter.add_mesh(self, scalars=scalars, show_edges=True, cmap="jet")
+        plotter.add_mesh(self.glyph("Jr", factor=factor), color="blue")
+        plotter.add_mesh(self.glyph("Ji", factor=factor), color="red")
 
         if lines:
             i, j, k = np.indices(self.Rm.shape)
@@ -279,6 +285,42 @@ class MoM(pv.PolyData):
             # "Z": Z,
         }
 
+    def radiate(self, probe: pv.StructuredGrid):
+        """radiate current sources to probe"""
+
+        dSp = cp.asarray(self.compute_cell_sizes()["Area"])[..., None]
+
+        J = cp.asarray(self.cell_data["Jr"] + 1j * self.cell_data["Ji"])
+
+        r2 = cp.asarray(probe.points[..., None, :])
+        r1 = cp.asarray(self.cell_centers().points)
+
+        r = r2 - r1
+
+        R = cp.linalg.norm(r, axis=-1, keepdims=True)
+
+        G = cp.exp(-1j * self.k * R) / (4 * cp.pi * R)
+
+        # re-derive using green't function with positive exponent
+        dG = r * (G / R**2 + 1j * self.k * G / R)
+
+        A = mu_0 * cp.sum(J * G * dSp, axis=-2)
+
+        divJr = self.compute_derivative("Jr", divergence=True)["divergence"]
+        divJi = self.compute_derivative("Jr", divergence=True)["divergence"]
+        divJ = cp.asarray(divJr + 1j * divJi)[..., None]
+
+        grad_phi = cp.sum(1j * divJ / self.omega * dG * dSp, axis=-2)
+
+        probe.point_data["Ar"] = A.get().real
+        probe.point_data["Ai"] = A.get().imag
+
+        Es = -1j * self.omega * A - grad_phi
+
+        probe.point_data["Er"] = Es.get().real
+        probe.point_data["Ei"] = Es.get().imag
+        probe.point_data["|E|^2"] = np.linalg.norm(Es.get(), axis=-1) ** 2
+
 
 def area(u, v):
     """compute area of triangle defined by vectors u and v"""
@@ -289,13 +331,13 @@ def demo():
     """run EFIE MoM RWG solver demo problem"""
     from glimmer import Gaussian, Mirror
 
-    src = Gaussian(w0=10 * milli, lam=c / (95 * giga), num_lam=3, num_waist=3)
+    src = Gaussian(w0=10 * milli, lam=c / (95 * giga), num_lam=4, num_waist=2)
     src.rotate_z(5)
     src.rotate_y(3)
 
     zR = np.pi * np.array(src.w0) ** 2 / src.lam
 
-    s = zR / 4
+    s = zR / 2
     cs = np.cos(np.pi / 4)
     w = src.w0 * (1 + (s / zR) ** 2) ** 0.5
     L = src.num_waist * w
@@ -312,23 +354,57 @@ def demo():
     m1.translate([0, 0, s])
 
     m2 = Mirror(**options)
-    # m2.rotate_x(-45)
-    m2.rotate_x(-100)
+    # m2.rotate_x(-135)
+    m2.rotate_x(-70)
     # m2.rotate_z(3)
     m2.translate([0, 2 * s, s])
 
     # src.radiate(m1)
-    grid = src + m1  # + m2
 
-    mom = MoM(grid, k=src.k)
-    mom.plot_excitation()
     # mom.plot_rwg_basis()
-    mom.solve()
+    if False:
+        grid = src + m1 + m2
+        mom = MoM(grid, k=src.k)
+        mom.plot_excitation()
+        mom.solve()
+        mom.save("mom.vtk")
+    else:
+        vtk = pv.read("mom.vtk")
+        mom = MoM(vtk, k=src.k)
 
-    # mom.plot_mesh(scalars="Er")
-    mom.plot_currents()
+    # mom.plot_currents()
+
+    vol = poly2grid(mom, d=milli * 2)
+    yz = poly2grid(mom, d=milli / 2, x=0)
+
+    mom.radiate(vol)
+    mom.radiate(yz)
+
+    plotter = pv.Plotter()
+    plotter.add_mesh(mom, scalars="|J|^2", cmap="jet")
+    plotter.add_volume(vol, scalars="|E|^2", opacity_unit_distance=milli, cmap="jet")
+    plotter.add_mesh(yz, scalars="|E|^2", cmap="jet")
+    plotter.show_grid()
+    plotter.show()
 
     # mom.show_charts()
+
+
+def poly2grid(poly, d, x=None, y=None, z=None):
+
+    xmin, xmax, ymin, ymax, zmin, zmax = poly.bounds
+
+    nx = int((xmax - xmin) / d) + 1
+    ny = int((ymax - ymin) / d) + 1
+    nz = int((zmax - zmin) / d) + 1
+
+    x = np.linspace(xmin, xmax, nx) if x is None else float(x)
+    y = np.linspace(ymin, ymax, ny) if y is None else float(y)
+    z = np.linspace(zmin, zmax, nz) if z is None else float(z)
+
+    x, y, z = np.meshgrid(x, y, z)
+
+    return pv.StructuredGrid(np.squeeze(x), np.squeeze(y), np.squeeze(z))
 
 
 if __name__ == "__main__":
