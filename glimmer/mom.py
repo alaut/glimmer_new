@@ -221,9 +221,10 @@ class MoM(pv.PolyData):
         print("computing electric potential ...")
         phi = [GmdSp[i] @ csr_matrix(dFpn[i]) for i in range(2)]
 
-        print("summing ...")
+        print("summing ... (why is this slow)")
         self.Avec = mu_0 / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1).get()
         self.phi = -1 / (4 * np.pi * 1j * self.omega * epsilon_0) * cp.array(phi).get()
+        print('summed !')
 
     def radiate(self, probe: pv.StructuredGrid, chunks: int = 1):
         """radiate current sources to probe"""
