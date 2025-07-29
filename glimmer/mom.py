@@ -1,5 +1,5 @@
 import quadpy
-import matplotlib.pyplot as plt
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -12,8 +12,7 @@ from cupyx.scipy.sparse.linalg import gmres
 import pyvista as pv
 
 from scipy.constants import epsilon_0, mu_0, c, milli, giga
-from glimmer.rwg import setup_rwg_connectivity
-from glimmer.chu import dot, cross, norm
+
 
 pv.global_theme.colorbar_orientation = "vertical"
 
@@ -40,8 +39,7 @@ class MoM(pv.PolyData):
         self.omega = self.k * c
 
         # define connectivity
-        self.con = self.faces.reshape(-1, 4)[:, 1:]
-        self.con_m = setup_rwg_connectivity(self.con)
+        self.setup_connectivity()
 
         # face vertices (N x 3 x 3)
         self.r = self.points[self.con]
@@ -87,6 +85,52 @@ class MoM(pv.PolyData):
 
         # define rwg basis functions
         self.define_basis_functions()
+
+    def setup_connectivity(self):
+        """generate RWG (Rao, Wilton, Glisson) connectivity from trimesh face connectivity"""
+
+        self.con = self.faces.reshape(-1, 4)[:, 1:]
+
+        # construct edges from face connectivity (face x edge x point) (N, 3, 2)
+        edges = self.con[:, [[0, 1], [1, 2], [2, 0]]]
+
+        # sort flattened edges by points (N x 3, 2)
+        sorted_edges = np.sort(edges.reshape(-1, 2))
+
+        # count edge uniqueness
+        unique_edges, counts = np.unique(sorted_edges, axis=0, return_counts=True)
+
+        # define rwg basis of unique internal edges (M, 2)
+        internal_edges = unique_edges[counts == 2]
+
+        def get_free_vert(edge):
+            """find free vertex given edge (2,) in face edges (M, 3, 2)"""
+
+            # match edge to face
+            face = np.any(np.all(edge == edges, axis=-1), axis=-1)
+
+            # get face to points
+            points = np.unique(edges[face])
+
+            # find free vertex
+            vertex = np.setdiff1d(points, edge)
+
+            return int(vertex[0])
+
+        # find free rwg vertices
+        vert_pos = np.array([get_free_vert(edge) for edge in internal_edges])
+        vert_neg = np.array([get_free_vert(edge[::-1]) for edge in internal_edges])
+
+        self.con_m = np.stack(
+            [
+                np.stack(
+                    [internal_edges[:, 0], internal_edges[:, 1], vert_pos], axis=-1
+                ),
+                np.stack(
+                    [internal_edges[:, 1], internal_edges[:, 0], vert_neg], axis=-1
+                ),
+            ]
+        )
 
     def solve(self):
 
@@ -213,25 +257,6 @@ class MoM(pv.PolyData):
         plotter.show_grid()
         plotter.show()
 
-    def show_charts(self):
-
-        plots = {}
-        for k, v in self.data.items():
-
-            if np.iscomplexobj(v):
-                plots[f"Re({k})"] = np.real(v)
-                plots[f"Im({k})"] = np.imag(v)
-            else:
-                plots[k] = v
-
-        for key, val in plots.items():
-            fig, ax = plt.subplots()
-            pcm = ax.imshow(val, cmap="bwr")
-            fig.colorbar(pcm, ax=ax)
-            ax.set_title(key)
-
-        plt.show()
-
     def compute_potentials(self):
 
         rmc = cp.asarray(self.rmc)
@@ -270,23 +295,10 @@ class MoM(pv.PolyData):
         self.Avec = mu_0 / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1).get()
         self.phi = -1 / (4 * np.pi * 1j * self.omega * epsilon_0) * cp.array(phi).get()
 
-        print("saving data ...")
-        self.data = {
-            # "$(r' \\in T_m^\\pm)$": np.sum(ind, axis=0),
-            # "$R_m^+$": Rm[0],
-            # "$R_m^-$": Rm[1],
-            # "R_m==0": np.any(Rm == 0, axis=0),
-            # "$G_m(r')^+$": G[0],
-            # "$G_m(r')^-$": G[1],
-            "$A^+$": np.linalg.norm(self.Avec[0], axis=-1),
-            "$A^-$": np.linalg.norm(self.Avec[1], axis=-1),
-            "$\\phi^+$": self.phi[0],
-            "$\\phi^-$": self.phi[1],
-            # "Z": Z,
-        }
-
     def radiate(self, probe: pv.StructuredGrid):
         """radiate current sources to probe"""
+
+        print("radiating EFIE ...")
 
         dSp = cp.asarray(self.compute_cell_sizes()["Area"])[..., None]
 
@@ -325,3 +337,20 @@ class MoM(pv.PolyData):
 def area(u, v):
     """compute area of triangle defined by vectors u and v"""
     return 0.5 * np.linalg.norm(np.cross(u, v, axis=-1), axis=-1)
+
+
+def poly2grid(poly, d, x=None, y=None, z=None, l=0):
+
+    xmin, xmax, ymin, ymax, zmin, zmax = poly.bounds
+
+    nx = int((xmax - xmin + 2 * l) / d) + 1
+    ny = int((ymax - ymin + 2 * l) / d) + 1
+    nz = int((zmax - zmin + 2 * l) / d) + 1
+
+    x = np.linspace(xmin - l, xmax + l, nx) if x is None else float(x)
+    y = np.linspace(ymin - l, ymax + l, ny) if y is None else float(y)
+    z = np.linspace(zmin - l, zmax + l, nz) if z is None else float(z)
+
+    x, y, z = np.meshgrid(x, y, z)
+
+    return pv.StructuredGrid(np.squeeze(x), np.squeeze(y), np.squeeze(z))
