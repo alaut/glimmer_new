@@ -64,27 +64,11 @@ class MoM(pv.PolyData):
         )
 
         # areas of faces (N)
-        self.dS = area(self.r[:, 1] - self.r[:, 0], self.r[:, 2] - self.r[:, 0])
+        # self.dS = area(self.r[:, 1] - self.r[:, 0], self.r[:, 2] - self.r[:, 0])
+        self.dS = self.compute_cell_sizes()["Area"]
 
         # face centroids (N x 3)
         self.rc = np.mean(self.r, axis=-2)
-
-        # define plus/minus modifier (used to correct rho vector orientation)"
-        pm = np.array([1, -1])[:, None, None]
-
-        # match con to rwg connectivity (2 x M x N)
-        self.ind = pm * np.all(
-            np.sort(self.con) == np.sort(self.con_m)[:, :, None], axis=-1
-        )
-
-        # define centroid to free vertex displacement vector
-        self.rhomc = pm * (self.rmc - self.rm[:, :, -1])
-
-        # define integration points
-        self.subdivide_faces()
-
-        # define rwg basis functions
-        self.define_basis_functions()
 
     def setup_connectivity(self):
         """generate RWG (Rao, Wilton, Glisson) connectivity from trimesh face connectivity"""
@@ -121,18 +105,17 @@ class MoM(pv.PolyData):
         vert_pos = np.array([get_free_vert(edge) for edge in internal_edges])
         vert_neg = np.array([get_free_vert(edge[::-1]) for edge in internal_edges])
 
-        self.con_m = np.stack(
-            [
-                np.stack(
-                    [internal_edges[:, 0], internal_edges[:, 1], vert_pos], axis=-1
-                ),
-                np.stack(
-                    [internal_edges[:, 1], internal_edges[:, 0], vert_neg], axis=-1
-                ),
-            ]
-        )
+        cp = np.stack([internal_edges[:, 0], internal_edges[:, 1], vert_pos], axis=-1)
+        cn = np.stack([internal_edges[:, 1], internal_edges[:, 0], vert_neg], axis=-1)
+
+        # define rwg connectivity
+        self.con_m = np.stack([cp, cn])
 
     def solve(self):
+
+        self.subdivide_by_quadrature()
+
+        self.define_basis_functions()
 
         self.compute_potentials()
 
@@ -143,11 +126,7 @@ class MoM(pv.PolyData):
     def solve_currents(self):
 
         print("gmres solve basis currents")
-
-        Z = cp.asarray(self.Z)
-        V = cp.asarray(self.V)
-
-        I, info = gmres(Z, V)
+        I, info = gmres(cp.asarray(self.Z), cp.asarray(self.V))
 
         if info > 0:
             RuntimeError("convergence to tolerance not achieved, number of iterations")
@@ -166,10 +145,14 @@ class MoM(pv.PolyData):
         print("saving current vectors")
         self.cell_data["Jr"] = J.real
         self.cell_data["Ji"] = J.imag
-        self.cell_data["|J|^2"] = np.linalg.norm(J, axis=-1)
+        self.cell_data["|J|^2"] = np.linalg.norm(J, axis=-1) ** 2
 
     def build_matrices(self):
         print("centroid basis displacement rwg centroid to free vertex ...")
+
+        # define centroid to free vertex displacement vector
+        pm = np.array([1, -1])[:, None, None]
+        self.rhomc = pm * (self.rmc - self.rm[:, :, -1])
 
         print("forming excitation vector ...")
         self.V = self.lm * np.sum(self.Emc * self.rhomc / 2, axis=(0, -1))
@@ -188,74 +171,22 @@ class MoM(pv.PolyData):
         print("compute integration point to free vertex displacement  (2 x M x N x 3)")
         rho = self.rp - self.rm[..., -1, :][..., None, None, :]
 
+        # match con to rwg connectivity (2 x M x N)
+        pm = np.array([1, -1])[:, None, None]
+        ind = pm * np.all(np.sort(self.con) == np.sort(self.con_m)[:, :, None], axis=-1)
+
         # consider summing along +/- axis, since this isn't in the notation technicaly specified
         print("computing rwg basis function")
-        self.fm = (self.ind * (self.lm / self.Am)[..., None])[..., None, None] * rho
+        self.fm = (ind * (self.lm / self.Am)[..., None])[..., None, None] * rho
 
         print("computing rwg basic function divergence (2 x M x N)")
-        self.dfm = self.ind * (self.lm / self.Am)[..., None]
+        self.dfm = ind * (self.lm / self.Am)[..., None]
 
-    def subdivide_faces(self):
-
+    def subdivide_by_quadrature(self):
         print("define source points r' at by quadrature (N, n, 3)")
         scheme = quadpy.t2.get_good_scheme(self.deg)
         self.rp = np.sum(self.r[..., None, :] * scheme.points[..., None], axis=1)
         self.dSp = self.dS[:, None] * scheme.weights
-
-    def plot_excitation(self):
-
-        self["Sr"] = np.cross(self["Er"], self["Hr"], axis=-1)
-        scale = np.mean(self.lm) / np.max(np.linalg.norm(self["Er"], axis=-1)) / 2
-
-        plotter = pv.Plotter()
-        plotter.add_mesh(self, scalars="Er", cmap="jet", show_edges=True)
-        plotter.add_mesh(self.glyph("Er", factor=scale), color="blue")
-        plotter.add_mesh(self.glyph("Hr", factor=scale), color="red")
-        plotter.add_mesh(self.glyph("Sr", factor=scale), color="green")
-        plotter.enable_parallel_projection()
-        plotter.show()
-
-    def plot_rwg_basis(self):
-
-        rp, rn = self.rm[:, :, -1]
-        rhomcp, rhomcn = self.rhomc
-
-        plotter = pv.Plotter()
-        plotter.add_mesh(self, show_edges=True)
-        plotter.add_arrows(rp, rhomcp, color="red")
-        plotter.add_arrows(rn - rhomcn, rhomcn, color="blue")
-        plotter.add_points(self.rp.reshape(-1, 3))
-        plotter.add_point_labels(self.points, range(self.points.shape[0]))
-        plotter.add_point_labels(self.rc, [str(con) for con in self.con])
-        labels = [[str(x[:2]) for x in con_m] for con_m in self.con_m]
-        plotter.add_point_labels(rp + rhomcp / 2, labels[0], text_color="red")
-        plotter.add_point_labels(rn - rhomcn / 2, labels[1], text_color="blue")
-        plotter.enable_parallel_projection()
-        plotter.show()
-
-    def plot_currents(self, lines=False, scalars="|J|^2"):
-
-        print("plotting currents ...")
-
-        factor = milli / np.max(np.linalg.norm(self["Jr"], axis=-1))
-
-        plotter = pv.Plotter()
-        plotter.add_mesh(self, scalars=scalars, show_edges=True, cmap="jet")
-        plotter.add_mesh(self.glyph("Jr", factor=factor), color="blue")
-        plotter.add_mesh(self.glyph("Ji", factor=factor), color="red")
-
-        if lines:
-            i, j, k = np.indices(self.Rm.shape)
-            i, j, k = np.nonzero(self.ind)
-            lines = plotter.add_lines(
-                lines=np.stack([self.rp[k], self.rmc[i, j]]).reshape(-1, 3, order="F"),
-                width=0.1,
-                color="black",
-            )
-
-        plotter.enable_parallel_projection()
-        plotter.show_grid()
-        plotter.show()
 
     def compute_potentials(self):
 
@@ -272,7 +203,6 @@ class MoM(pv.PolyData):
         G[~cp.isfinite(G)] = 0
 
         # broadcast integration points
-
         GmdSp, dFpn = cp.broadcast_arrays(
             cp.asarray(G * dSp),
             cp.asarray(self.dfm[..., None]),
@@ -295,43 +225,37 @@ class MoM(pv.PolyData):
         self.Avec = mu_0 / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1).get()
         self.phi = -1 / (4 * np.pi * 1j * self.omega * epsilon_0) * cp.array(phi).get()
 
-    def radiate(self, probe: pv.StructuredGrid):
+    def radiate(self, probe: pv.StructuredGrid, chunks: int = 1):
         """radiate current sources to probe"""
 
-        print("radiating EFIE ...")
-
+        r1 = cp.asarray(self.cell_centers().points)
         dSp = cp.asarray(self.compute_cell_sizes()["Area"])[..., None]
 
         J = cp.asarray(self.cell_data["Jr"] + 1j * self.cell_data["Ji"])
-
-        r2 = cp.asarray(probe.points[..., None, :])
-        r1 = cp.asarray(self.cell_centers().points)
-
-        r = r2 - r1
-
-        R = cp.linalg.norm(r, axis=-1, keepdims=True)
-
-        G = cp.exp(-1j * self.k * R) / (4 * cp.pi * R)
-
-        # re-derive using green't function with positive exponent
-        dG = r * (G / R**2 + 1j * self.k * G / R)
-
-        A = mu_0 * cp.sum(J * G * dSp, axis=-2)
 
         divJr = self.compute_derivative("Jr", divergence=True)["divergence"]
         divJi = self.compute_derivative("Jr", divergence=True)["divergence"]
         divJ = cp.asarray(divJr + 1j * divJi)[..., None]
 
-        grad_phi = cp.sum(1j * divJ / self.omega * dG * dSp, axis=-2)
+        def Es(r2):
+            """radiate r1 onto chunk of r2, re-derive using green't function with positive exponent"""
+            r = cp.asarray(r2)[..., None, :] - r1
+            R = cp.linalg.norm(r, axis=-1, keepdims=True)
+            G = cp.exp(-1j * self.k * R) / (4 * cp.pi * R)
 
-        probe.point_data["Ar"] = A.get().real
-        probe.point_data["Ai"] = A.get().imag
+            dG = r * (G / R**2 + 1j * self.k * G / R)
 
-        Es = -1j * self.omega * A - grad_phi
+            A = mu_0 * cp.sum(J * G * dSp, axis=-2)
+            grad_phi = cp.sum(1j * divJ / self.omega * dG * dSp, axis=-2)
 
-        probe.point_data["Er"] = Es.get().real
-        probe.point_data["Ei"] = Es.get().imag
-        probe.point_data["|E|^2"] = np.linalg.norm(Es.get(), axis=-1) ** 2
+            return (-1j * self.omega * A - grad_phi).get()
+
+        print("radiating EFIE ...")
+        E = np.concat([Es(r2) for r2 in np.array_split(probe.points, chunks)])
+
+        probe.point_data["Er"] = E.real
+        probe.point_data["Ei"] = E.imag
+        probe.point_data["|E|^2"] = np.linalg.norm(E, axis=-1) ** 2
 
 
 def area(u, v):
