@@ -50,10 +50,10 @@ class MoM(pv.PolyData):
         self.con_m, self.isin = rwg_connectivity(self.con)
 
         # number of edges
-        self.M = self.con_m.shape[1]
+        self.M = self.con_m.shape[-2]
 
         # number of faces
-        self.N = self.con.shape[0]
+        self.N = self.con.shape[-2]
 
         print(f"edges: {self.M}")
         print(f"faces: {self.N}")
@@ -167,7 +167,6 @@ class MoM(pv.PolyData):
 
         # match con to rwg connectivity (2 x M x N)
         pm = np.array([1, -1])[:, None, None]
-
         ind = cp.asarray(pm * self.isin)
 
         # consider summing along +/- axis, since this isn't in the notation technicaly specified
@@ -190,7 +189,7 @@ class MoM(pv.PolyData):
         print("interaction displacement vector (2 x M x M)")
         Rm = cp.linalg.norm(self.rmc[..., None, None, :] - self.rp, axis=-1)
 
-        print("Greens function (2 x M x n) ...")
+        print("Greens function (2 x M x N) ...")
         G = cp.exp(-1j * self.k * Rm) / (4 * cp.pi * Rm)
         G[~cp.isfinite(G)] = 0
 
@@ -202,16 +201,16 @@ class MoM(pv.PolyData):
         dFpn = dFpn.reshape(*dFpn.shape[:2], -1).transpose(0, 2, 1)
         Fpn = self.fm.reshape(*self.fm.shape[:2], -1, 3).transpose(0, 2, 1, 3)
 
+        print("computing electric potential ...")
+        self.phi = cp.empty((2, self.M, self.M), dtype=cp.complex128)
+        for i in range(2):
+            self.phi[i] = 1j / (self.omega * epsilon_0) * GmdSp[i] @ csr_matrix(dFpn[i])
+
         print("computing magnetic vector potential ...")
         self.Avec = cp.empty((2, self.M, self.M, 3), dtype=cp.complex128)
         for i in range(2):
             for j in range(3):
                 self.Avec[i, ..., j] = mu_0 * GmdSp[i] @ csr_matrix(Fpn[i, ..., j])
-
-        print("computing electric potential ...")
-        self.phi = cp.empty((2, self.M, self.M), dtype=cp.complex128)
-        for i in range(2):
-            self.phi[i] = 1j / (self.omega * epsilon_0) * GmdSp[i] @ csr_matrix(dFpn[i])
 
     def radiate(self, probe: pv.StructuredGrid, chunks: int = 1):
         """radiate current sources to probe"""

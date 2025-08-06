@@ -1,12 +1,12 @@
 import pyvista as pv
-from glimmer import Gaussian, Mirror, Volume, Problem
+from glimmer import Gaussian, Mirror
 import numpy as np
 
 
 from glimmer.tools import poly2grid
 from scipy.constants import milli
 
-src = Gaussian(w0=10 * milli, lam=3 * milli, num_lam=3, num_waist=2.0)
+src = Gaussian(w0=10 * milli, lam=3 * milli, num_lam=3, num_waist=2)
 src.rotate_z(5)
 src.rotate_y(3)
 
