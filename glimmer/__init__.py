@@ -5,6 +5,10 @@ import numpy as np
 
 from glimmer.chu import StrattonChu, EH_Gaussian
 
+import pyvista as pv
+
+pv.global_theme.colorbar_orientation = "vertical"
+
 
 def unpack(f):
 
@@ -174,7 +178,7 @@ class Grid(StructuredGrid):
         self["|<S>|"], self["|<S>| (dB)"] = logclip(S0)
 
         self.set_active_vectors("Sr")
-        self.set_active_scalars("|<S>|")
+        self.set_active_scalars("|E|^2")
 
     def get_fields(self):
 
@@ -311,7 +315,12 @@ class Problem:
         for i, (obj, actor) in enumerate(self.actors):
             if obj.dimensionality == 3:
                 self.plotter.remove_actor(actor)
-                new_actor = self.plotter.add_volume(obj, clim=self.clim, cmap=self.cmap)
+                new_actor = self.plotter.add_volume(
+                    obj,
+                    clim=self.clim,
+                    cmap=self.cmap,
+                    opacity_unit_distance=obj.length / np.linalg.norm(obj.dimensions),
+                )
                 self.actors[i] = (obj, new_actor)
 
         self.plotter.render()
@@ -320,17 +329,24 @@ class Problem:
 
         self.plotter = Plotter()
 
-        objects = [self.source, *self.optics, *self.probes]
+        objects = [*self.probes, *self.optics, self.source]
 
         scalars = np.concat([np.ravel(obj.active_scalars) for obj in objects])
 
         self.clim = (np.nanmin(scalars), np.nanmax(scalars))
 
         def add_object(obj):
-            try:
-                return self.plotter.add_volume(obj, clim=self.clim, cmap=self.cmap)
-            except:
-                return self.plotter.add_mesh(obj, clim=self.clim, cmap=self.cmap)
+            if obj.dimensionality == 3:
+                actor = self.plotter.add_volume(
+                    obj,
+                    clim=self.clim,
+                    cmap=self.cmap,
+                    opacity_unit_distance=obj.length / np.linalg.norm(obj.dimensions),
+                )
+            else:
+                actor = self.plotter.add_mesh(obj, clim=self.clim, cmap=self.cmap)
+
+            return actor
 
         self.actors = [(obj, add_object(obj)) for obj in objects]
 
