@@ -20,6 +20,8 @@ from glimmer.tools import area, rwg_connectivity
 pv.global_theme.colorbar_orientation = "vertical"
 pv.global_theme.cmap = "jet"
 
+eta = cp.sqrt(mu_0 / epsilon_0)
+
 
 @dataclass
 class MoM(pv.PolyData):
@@ -93,8 +95,6 @@ class MoM(pv.PolyData):
 
         self.define_basis_functions()
 
-        self.compute_potentials()
-
         self.build_matrices()
 
         self.solve_currents()
@@ -142,14 +142,44 @@ class MoM(pv.PolyData):
         self.cell_data["|J|^2"] = np.linalg.norm(J, axis=-1) ** 2
 
     def build_matrices(self):
-        print("centroid basis displacement rwg centroid to free vertex ...")
 
-        # define centroid to free vertex displacement vector
+        print("interaction displacement vector (2 x M x M)")
+        Rm = cp.linalg.norm(self.rmc[..., None, None, :] - self.rp, axis=-1)
+
+        print("Greens function (2 x M x N) ...")
+        G = cp.exp(-1j * self.k * Rm) / (4 * cp.pi * Rm)
+        G[~cp.isfinite(G)] = 0
+
+        # broadcast integration points
+        GmdSp, dFpn = cp.broadcast_arrays(G * self.dSp, self.dfm[..., None])
+
+        # reshape along integration points
+        GmdSp = GmdSp.reshape(*GmdSp.shape[:2], -1)
+        dFpn = dFpn.reshape(*dFpn.shape[:2], -1).transpose(0, 2, 1)
+        Fpn = self.fm.reshape(*self.fm.shape[:2], -1, 3).transpose(0, 2, 1, 3)
+
+        print("centroid basis displacement rwg centroid to free vertex ...")
         pm = cp.array([1, -1])[:, None, None]
         self.rhomc = pm * (self.rmc - self.rm[:, :, -1])
 
+        # build impedance matrix
+        # RHS = cp.sum(eta * Fpn * self.rhomc[:, None] / 2, axis=-1) - pm * dFpn / eta
+        # Z0 = [1j * self.k * self.lm * (GmdSp[i] @ csr_matrix(RHS[i])) for i in range(2)]
+        # self.Z = -(Z[0] + Z[1])
+
+        print("computing electric potential ...")
+        self.phi = cp.empty((2, self.M, self.M), dtype=cp.complex128)
+        for i in range(2):
+            self.phi[i] = 1j / (self.omega * epsilon_0) * GmdSp[i] @ csr_matrix(dFpn[i])
+
+        print("computing magnetic vector potential ...")
+        self.Avec = cp.empty((2, self.M, self.M, 3), dtype=cp.complex128)
+        for i in range(2):
+            for j in range(3):
+                self.Avec[i, ..., j] = mu_0 * GmdSp[i] @ csr_matrix(Fpn[i, ..., j])
+
         print("forming excitation vector ...")
-        self.V = self.lm * np.sum(self.Emc * self.rhomc / 2, axis=(0, -1))
+        self.V = self.lm * cp.sum(self.Emc * self.rhomc / 2, axis=(0, -1))
 
         # fix
         print("forming impedance matrix ...")
@@ -159,6 +189,16 @@ class MoM(pv.PolyData):
             * cp.sum(self.Avec * self.rhomc[..., None, :] / 2, axis=(0, -1))
             - cp.diff(self.phi, axis=0)[0]
         )
+
+        # for Z in [self.Z0, self.Z, self.Z0 - self.Z]:
+        #     Z[Z == 0] = np.nan
+        #     fig, (ax1, ax2) = plt.subplots(1, 2)
+        #     pcm1 = ax1.pcolormesh(np.real(Z.get()))
+        #     pcm2 = ax2.pcolormesh(np.imag(Z.get()))
+        #     fig.colorbar(pcm1, ax=ax1)
+        #     fig.colorbar(pcm2, ax=ax2)
+
+        # plt.show()
 
     def define_basis_functions(self):
 
@@ -183,34 +223,6 @@ class MoM(pv.PolyData):
             self.r[..., None, :] * cp.asarray(scheme.points)[..., None], axis=1
         )
         self.dSp = self.dS[:, None] * cp.asarray(scheme.weights)
-
-    def compute_potentials(self):
-
-        print("interaction displacement vector (2 x M x M)")
-        Rm = cp.linalg.norm(self.rmc[..., None, None, :] - self.rp, axis=-1)
-
-        print("Greens function (2 x M x N) ...")
-        G = cp.exp(-1j * self.k * Rm) / (4 * cp.pi * Rm)
-        G[~cp.isfinite(G)] = 0
-
-        # broadcast integration points
-        GmdSp, dFpn = cp.broadcast_arrays(G * self.dSp, self.dfm[..., None])
-
-        # reshape along integration points
-        GmdSp = GmdSp.reshape(*GmdSp.shape[:2], -1)
-        dFpn = dFpn.reshape(*dFpn.shape[:2], -1).transpose(0, 2, 1)
-        Fpn = self.fm.reshape(*self.fm.shape[:2], -1, 3).transpose(0, 2, 1, 3)
-
-        print("computing electric potential ...")
-        self.phi = cp.empty((2, self.M, self.M), dtype=cp.complex128)
-        for i in range(2):
-            self.phi[i] = 1j / (self.omega * epsilon_0) * GmdSp[i] @ csr_matrix(dFpn[i])
-
-        print("computing magnetic vector potential ...")
-        self.Avec = cp.empty((2, self.M, self.M, 3), dtype=cp.complex128)
-        for i in range(2):
-            for j in range(3):
-                self.Avec[i, ..., j] = mu_0 * GmdSp[i] @ csr_matrix(Fpn[i, ..., j])
 
     def radiate(self, probe: pv.StructuredGrid, chunks: int = 1):
         """radiate current sources to probe"""
@@ -246,3 +258,6 @@ class MoM(pv.PolyData):
         E2, E2dB = logclip(E2)
         probe.point_data["|E|^2"] = E2
         probe.point_data["|E|^2 (dB)"] = E2dB
+
+
+import matplotlib.pyplot as plt
