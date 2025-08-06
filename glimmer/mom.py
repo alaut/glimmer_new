@@ -155,14 +155,14 @@ class MoM(pv.PolyData):
         self.rhomc = pm * (self.rmc - self.rm[:, :, -1])
 
         print("forming excitation vector ...")
-        self.V = self.lm * np.sum(self.Emc * self.rhomc / 2, axis=(0, -1))
+        self.V = self.lm * np.sum(dot(self.Emc, self.rhomc / 2), axis=0)
 
         # fix
         print("forming impedance matrix ...")
         self.Z = self.lm * (
             1j
             * self.omega
-            * np.sum(self.Avec * self.rhomc[:, :, None, :] / 2, axis=(0, -1))
+            * np.sum(dot(self.Avec, self.rhomc[:, :, None, :] / 2), axis=0)
             - (self.phi[1] - self.phi[0])
         )
 
@@ -224,7 +224,7 @@ class MoM(pv.PolyData):
         print("summing ... (why is this slow)")
         self.Avec = mu_0 / (4 * np.pi) * cp.stack(cp.array(Avec), axis=-1).get()
         self.phi = -1 / (4 * np.pi * 1j * self.omega * epsilon_0) * cp.array(phi).get()
-        print('summed !')
+        print("summed !")
 
     def radiate(self, probe: pv.StructuredGrid, chunks: int = 1):
         """radiate current sources to probe"""
@@ -235,7 +235,7 @@ class MoM(pv.PolyData):
         J = cp.asarray(self.cell_data["Jr"] + 1j * self.cell_data["Ji"])
 
         divJr = self.compute_derivative("Jr", divergence=True)["divergence"]
-        divJi = self.compute_derivative("Jr", divergence=True)["divergence"]
+        divJi = self.compute_derivative("Ji", divergence=True)["divergence"]
         divJ = cp.asarray(divJr + 1j * divJi)[..., None]
 
         def Es(r2):
@@ -264,7 +264,15 @@ def area(u, v):
     return 0.5 * np.linalg.norm(np.cross(u, v, axis=-1), axis=-1)
 
 
+def dot(A, B):
+    return np.sum(A * B, axis=-1)
+
+
+from glimmer import Grid
+
+
 def poly2grid(poly, d, x=None, y=None, z=None, l=0):
+    """given polydata, find bounds and return meshed grid/plane"""
 
     xmin, xmax, ymin, ymax, zmin, zmax = poly.bounds
 
@@ -278,4 +286,6 @@ def poly2grid(poly, d, x=None, y=None, z=None, l=0):
 
     x, y, z = np.meshgrid(x, y, z)
 
-    return pv.StructuredGrid(np.squeeze(x), np.squeeze(y), np.squeeze(z))
+    grid = pv.StructuredGrid(np.squeeze(x), np.squeeze(y), np.squeeze(z))
+
+    return Grid(grid)
