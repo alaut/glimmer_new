@@ -3,7 +3,7 @@ from pyvista import StructuredGrid, Plotter
 from dataclasses import dataclass
 import numpy as np
 
-from glimmer.chu import StrattonChu, EH_Gaussian, EH_Hermite
+from .chu import StrattonChu, EH_Hermite
 
 import pyvista as pv
 

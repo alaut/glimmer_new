@@ -1,8 +1,7 @@
 import numpy as np
 import pyvista as pv
 
-from glimmer import Grid
-
+from . import Grid
 import cupy as cp
 
 
