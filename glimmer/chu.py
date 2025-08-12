@@ -1,8 +1,9 @@
 import cupy as cp
 
 from scipy.constants import mu_0, epsilon_0
+import numpy as np
 
-eta = cp.sqrt(mu_0 / epsilon_0)
+eta = np.sqrt(mu_0 / epsilon_0)
 
 
 def dot(A, B):
@@ -68,3 +69,60 @@ def EH_Gaussian(r1, wx, wy, P0=1):
     H = A * cp.array([0, 1, 0]) / eta
 
     return E.get(), H.get()
+
+
+def EH_Hermite(r, l, m, c, wx, wy):
+    l = np.atleast_1d(l)
+    m = np.atleast_1d(m)
+    c = np.atleast_1d(c)
+
+    mf = factorial(l)
+    nf = factorial(m)
+
+    x = r[..., 0]
+    y = r[..., 1]
+
+    # wx, wy = self.get_waists()
+
+    Hm = hermite(l, 2**0.5 * x / wx)
+    Hn = hermite(m, 2**0.5 * y / wy)
+
+    A0 = Hm * Hn / np.sqrt(np.pi * wx * wy * 2.0 ** (l + m - 1) * mf * nf)
+
+    X = np.exp(-(x**2) / wx**2)[..., None]
+    Y = np.exp(-(y**2) / wy**2)[..., None]
+    A = np.sum(c * A0 * X * Y, axis=-1)
+
+    E = A[..., None] * np.array([1, 0, 0])
+    H = A[..., None] * np.array([0, 1, 0]) / eta
+    return E, H
+
+
+def hermite(m, x):
+    """evaluates hermite polynomial H_m(x)"""
+
+    y = (m == 0) + 2 * (m == 1) * x[..., None]
+
+    ind = m > 1
+
+    if any(ind):
+
+        h1 = 2 * x[..., None] * hermite(m[ind] - 1, x)
+        h2 = 2 * (m[ind] - 1) * hermite(m[ind] - 2, x)
+
+        y[..., ind] = h1 - h2
+
+    return y
+
+
+def factorial(n):
+    """returns factorial"""
+
+    y = (n == 0).astype(float) + (n == 1).astype(float)
+
+    ind = n > 1
+
+    if any(ind):
+        y[ind] = n[ind] * factorial(n[ind] - 1)
+
+    return y

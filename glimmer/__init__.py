@@ -3,11 +3,12 @@ from pyvista import StructuredGrid, Plotter
 from dataclasses import dataclass
 import numpy as np
 
-from glimmer.chu import StrattonChu, EH_Gaussian
+from glimmer.chu import StrattonChu, EH_Gaussian, EH_Hermite
 
 import pyvista as pv
 
 pv.global_theme.colorbar_orientation = "vertical"
+import cupy as cp
 
 
 def unpack(f):
@@ -190,6 +191,25 @@ class Grid(StructuredGrid):
 
         return E, H
 
+    def get_phase(self):
+
+        E, H = self.get_fields()
+
+        for i, k in enumerate("xyz"):
+            e = E[..., i].reshape(self.points_matrix.shape[:2], order="F")
+
+            phi = np.angle(e)
+            phi_u = unwrap_phase(phi)
+            m, n = phi_u.shape
+            phi_u = phi_u - phi_u[int(m / 2), int(n / 2)]
+
+            self[f"phi_{k}"] = phi.reshape(-1, order="F")
+
+            self[f"phi_{k} (unwrapped)"] = phi_u.reshape(-1, order="F")
+
+
+from skimage.restoration import unwrap_phase
+
 
 @dataclass
 class Volume(Grid):
@@ -248,12 +268,56 @@ class Gaussian(Grid):
 
 
 @dataclass
+class HermiteGaussian(Grid):
+    w0: float
+
+    c: float
+    m: np.array
+    l: np.array
+
+    lam: float
+
+    num_lam: float = 3
+    num_waist: float = 3
+
+    P0: float = 1
+
+    def __post_init__(self):
+
+        self.k = 2 * np.pi / self.lam
+
+        wx, wy = unpack(self.w0)
+
+        x, y = span((wx * self.num_waist, wy * self.num_waist), self.lam / self.num_lam)
+
+        x, y, z = np.broadcast_arrays(x, y, 0)
+
+        super().__init__(x, y, z)
+
+        # E, H = EH_Gaussian(self.points_matrix, wx=wx, wy=wy)
+        E, H = EH_Hermite(
+            self.points_matrix,
+            l=self.l,
+            m=self.m,
+            c=self.c,
+            wx=wx,
+            wy=wy,
+        )
+
+        self.set_fields(E, H)
+
+
+@dataclass
 class Mirror(Grid):
 
     L: tuple
     dL: float
 
     f: float = None
+
+    chunks: int = 1
+
+    dz: np.array = 0
 
     def __post_init__(self, **kwargs):
 
@@ -266,9 +330,9 @@ class Mirror(Grid):
         else:
             z = np.zeros_like(x)
 
-        super().__init__(x, y, z, **kwargs)
+        super().__init__(x, y, z + self.dz, **kwargs)
 
-        self.round_repr()
+        # self.round_repr()
 
 
 @dataclass
@@ -284,8 +348,8 @@ class Problem:
 
     def solve(self):
 
-        for obj in [self.source, *self.optics, *self.probes]:
-            obj.round_repr()
+        # for obj in [self.source, *self.optics, *self.probes]:
+        #     obj.round_repr()
 
         sources = [self.source.radiate]
 
@@ -296,6 +360,8 @@ class Problem:
         for probe in self.probes:
             for source in sources:
                 source(probe)
+
+        print("solved !")
 
     def update_scene(self):
 
@@ -325,15 +391,15 @@ class Problem:
 
         self.plotter.render()
 
-    def plot(self):
+    def plot(self, scalars="|E|^2"):
 
         self.plotter = Plotter()
 
         objects = [*self.probes, *self.optics, self.source]
 
-        scalars = np.concat([np.ravel(obj.active_scalars) for obj in objects])
+        all_scalars = np.concat([np.ravel(obj[scalars]) for obj in objects])
 
-        self.clim = (np.nanmin(scalars), np.nanmax(scalars))
+        self.clim = (np.nanmin(all_scalars), np.nanmax(all_scalars))
 
         def add_object(obj):
             if obj.dimensionality == 3:
@@ -342,16 +408,23 @@ class Problem:
                     clim=self.clim,
                     cmap=self.cmap,
                     opacity_unit_distance=obj.length / np.linalg.norm(obj.dimensions),
+                    scalars=scalars,
                 )
             else:
-                actor = self.plotter.add_mesh(obj, clim=self.clim, cmap=self.cmap)
+                actor = self.plotter.add_mesh(
+                    obj,
+                    clim=self.clim,
+                    cmap=self.cmap,
+                    # opacity="linear",
+                    scalars=scalars,
+                )
 
             return actor
 
         self.actors = [(obj, add_object(obj)) for obj in objects]
 
-        self.plotter.enable_parallel_projection()
-        self.plotter.show_grid()
+        # self.plotter.enable_parallel_projection()
+        # self.plotter.show_grid()
 
         self.plotter.add_key_event("u", self.update_scene)
         self.plotter.add_key_event("i", self.toggle_interactive)
@@ -378,3 +451,60 @@ class Problem:
 
         for i, probe in enumerate(self.probes):
             probe.save(f"{name}.probe.{i}.vtk")
+
+
+# @dataclass
+
+
+# @dataclass
+# class HermiteGaussian(Grid):
+
+#     w0: tuple
+#     lam: float
+
+#     l: int = 0
+#     m: int = 0
+#     c: complex = 1
+
+#     num_waist: float = 3
+#     num_lam: float = 3
+
+#     rotation: tuple = (0, 0, 0)
+#     position: tuple = (0, 0, 0)
+
+#     def __post_init__(self):
+
+#         self.make_grid()
+#         self.set_fields()
+#         self.rotate(*self.rotation)
+#         self.translate(*self.position)
+
+#     def get_waists(self):
+
+#         try:
+#             wx, wy = self.w0
+#         except:
+#             wx = wy = self.w0
+
+#         return wx, wy
+
+#     def make_grid(self):
+
+#         wx, wy = self.get_waists()
+
+#         Lx = wx * self.num_waist
+#         Ly = wy * self.num_waist
+
+#         nx = int(Lx / (self.lam / self.num_lam))
+#         ny = int(Ly / (self.lam / self.num_lam))
+
+#         x = Lx / 2 * cp.linspace(-1.0, 1.0, nx + 1)
+#         y = Ly / 2 * cp.linspace(-1.0, 1.0, ny - 1)
+#         z = cp.array([0.0])
+
+#         self.r = cp.squeeze(cp.stack(cp.meshgrid(x, y, z), axis=-1))
+
+#     def set_fields(self):
+#         """goldsmith equation 2.6.2"""
+
+#
