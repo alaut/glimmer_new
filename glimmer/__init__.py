@@ -148,8 +148,10 @@ class Grid(StructuredGrid):
         H2 = np.reshape(np.concatenate(H2), other.points_matrix.shape)
 
         E, H = other.get_fields()
-
-        other.k = self.k
+        try:
+            pv.set_new_attribute(other, 'k', self.k)
+        except:
+            other.k = self.k
         other.set_fields(E + E2, H + H2)
 
     def negate(self, probe, **kwargs):
