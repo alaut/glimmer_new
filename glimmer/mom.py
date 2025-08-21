@@ -1,4 +1,4 @@
-from glimmer import logclip
+from . import logclip
 import quadpy
 
 from dataclasses import dataclass, field
@@ -15,7 +15,7 @@ import pyvista as pv
 
 from scipy.constants import epsilon_0, mu_0, c
 
-from glimmer.tools import area, rwg_connectivity
+from .tools import area, rwg_connectivity
 
 pv.global_theme.colorbar_orientation = "vertical"
 pv.global_theme.cmap = "jet"
