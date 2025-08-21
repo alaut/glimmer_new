@@ -123,6 +123,11 @@ class Grid(StructuredGrid):
 
         E1, H1 = self.get_fields()
 
+        # apply E-phase jump
+        match mode:
+            case 'reflect':
+                E1 = E1 * np.exp(1j * self.dphi)
+
         chunks = np.array_split(
             np.reshape(other.points_matrix, (-1, 3)), other.chunks, axis=0
         )
@@ -318,6 +323,7 @@ class Mirror(Grid):
     chunks: int = 1
 
     dz: np.array = 0
+    dphi: np.array = 0
 
     def __post_init__(self, **kwargs):
 
