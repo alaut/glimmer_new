@@ -10,24 +10,22 @@ import pyvista as pv
 pv.global_theme.colorbar_orientation = "vertical"
 import cupy as cp
 
+from scipy.constants import mu_0, epsilon_0
+import numpy as np
 
-def unpack(f):
-
-    try:
-        fx, fy = f
-    except:
-        fx = fy = f
-    return fx, fy
+eta = np.sqrt(mu_0 / epsilon_0)
 
 
 def span(L, dL):
 
-    Lx, Ly = unpack(L)
+    Lx, Ly = np.array(L) * np.array([1, 1])
 
-    return np.meshgrid(
-        np.linspace(-Lx / 2, Lx / 2, int(Lx / dL) + 1),
-        np.linspace(-Ly / 2, Ly / 2, int(Ly / dL) - 1),
-    )
+    x = np.linspace(-Lx / 2, Lx / 2, int(Lx / dL) + 1)
+    y = np.linspace(-Ly / 2, Ly / 2, int(Ly / dL) - 1)
+
+    X, Y = np.meshgrid(x, y)
+
+    return X, Y
 
 
 def logclip(A0, clip=99.5, dBmin=-30):
@@ -260,7 +258,7 @@ class Gaussian(Grid):
 
         self.k = 2 * np.pi / self.lam
 
-        wx, wy = unpack(self.w0)
+        wx, wy = np.array([1, 1]) * np.array(self.w0)
 
         x, y = span((wx * self.num_waist, wy * self.num_waist), self.lam / self.num_lam)
 
@@ -292,7 +290,7 @@ class HermiteGaussian(Grid):
 
         self.k = 2 * np.pi / self.lam
 
-        wx, wy = unpack(self.w0)
+        wx, wy = np.array([1, 1]) * np.array(self.w0)
 
         x, y = span((wx * self.num_waist, wy * self.num_waist), self.lam / self.num_lam)
 
@@ -331,7 +329,7 @@ class Mirror(Grid):
         x, y = span(self.L, self.dL)
 
         if self.f is not None:
-            fx, fy = unpack(self.f)
+            fx, fy = np.array(self.f) * np.array([1, 1])
 
             z = -(x**2) / (4 * fx) - y**2 / (4 * fy)
         else:
