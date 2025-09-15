@@ -123,7 +123,7 @@ class MoM(pv.PolyData):
     def solve_currents(self):
 
         print("gmres solve basis currents")
-        self.I, info = gmres(self.Z, self.V)
+        self._I, info = gmres(self._Z, self._V)
 
         if info > 0:
             RuntimeError("convergence to tolerance not achieved, number of iterations")
@@ -132,7 +132,8 @@ class MoM(pv.PolyData):
 
         print("integrating surface currents ...")
         J = np.sum(
-            self.I[:, None, None, None] * self.fm * self.dSp[..., None], axis=(0, 1, -2)
+            self._I[:, None, None, None] * self._fm * self._dSp[..., None],
+            axis=(0, 1, -2),
         ).get()
 
         # Compute magnitude squared for plotting
@@ -144,23 +145,23 @@ class MoM(pv.PolyData):
     def build_matrices(self):
 
         print("interaction displacement vector (2 x M x M)")
-        Rm = cp.linalg.norm(self.rmc[..., None, None, :] - self.rp, axis=-1)
+        Rm = cp.linalg.norm(self.rmc[..., None, None, :] - self._rp, axis=-1)
 
         print("Greens function (2 x M x N) ...")
         G = cp.exp(-1j * self.k * Rm) / (4 * cp.pi * Rm)
         G[~cp.isfinite(G)] = 0
 
         # broadcast integration points
-        GmdSp, dFpn = cp.broadcast_arrays(G * self.dSp, self.dfm[..., None])
+        GmdSp, dFpn = cp.broadcast_arrays(G * self._dSp, self._dfm[..., None])
 
         # reshape along integration points
         GmdSp = GmdSp.reshape(*GmdSp.shape[:2], -1)
         dFpn = dFpn.reshape(*dFpn.shape[:2], -1).transpose(0, 2, 1)
-        Fpn = self.fm.reshape(*self.fm.shape[:2], -1, 3).transpose(0, 2, 1, 3)
+        Fpn = self._fm.reshape(*self._fm.shape[:2], -1, 3).transpose(0, 2, 1, 3)
 
         print("centroid basis displacement rwg centroid to free vertex ...")
         pm = cp.array([1, -1])[:, None, None]
-        self.rhomc = pm * (self.rmc - self.rm[:, :, -1])
+        self._rhomc = pm * (self.rmc - self.rm[:, :, -1])
 
         # build impedance matrix
         # RHS = cp.sum(eta * Fpn * self.rhomc[:, None] / 2, axis=-1) - pm * dFpn / eta
@@ -168,26 +169,28 @@ class MoM(pv.PolyData):
         # self.Z = -(Z[0] + Z[1])
 
         print("computing electric potential ...")
-        self.phi = cp.empty((2, self.M, self.M), dtype=cp.complex128)
+        self._phi = cp.empty((2, self.M, self.M), dtype=cp.complex128)
         for i in range(2):
-            self.phi[i] = 1j / (self.omega * epsilon_0) * GmdSp[i] @ csr_matrix(dFpn[i])
+            self._phi[i] = (
+                1j / (self.omega * epsilon_0) * GmdSp[i] @ csr_matrix(dFpn[i])
+            )
 
         print("computing magnetic vector potential ...")
-        self.Avec = cp.empty((2, self.M, self.M, 3), dtype=cp.complex128)
+        self._Avec = cp.empty((2, self.M, self.M, 3), dtype=cp.complex128)
         for i in range(2):
             for j in range(3):
-                self.Avec[i, ..., j] = mu_0 * GmdSp[i] @ csr_matrix(Fpn[i, ..., j])
+                self._Avec[i, ..., j] = mu_0 * GmdSp[i] @ csr_matrix(Fpn[i, ..., j])
 
         print("forming excitation vector ...")
-        self.V = self.lm * cp.sum(self.Emc * self.rhomc / 2, axis=(0, -1))
+        self._V = self.lm * cp.sum(self.Emc * self._rhomc / 2, axis=(0, -1))
 
         # fix
         print("forming impedance matrix ...")
-        self.Z = self.lm * (
+        self._Z = self.lm * (
             1j
             * self.omega
-            * cp.sum(self.Avec * self.rhomc[..., None, :] / 2, axis=(0, -1))
-            - cp.diff(self.phi, axis=0)[0]
+            * cp.sum(self._Avec * self._rhomc[..., None, :] / 2, axis=(0, -1))
+            - cp.diff(self._phi, axis=0)[0]
         )
 
         # for Z in [self.Z0, self.Z, self.Z0 - self.Z]:
@@ -203,7 +206,7 @@ class MoM(pv.PolyData):
     def define_basis_functions(self):
 
         print("compute integration point to free vertex displacement  (2 x M x N x 3)")
-        rho = self.rp - self.rm[..., -1, :][..., None, None, :]
+        rho = self._rp - self.rm[..., -1, :][..., None, None, :]
 
         # match con to rwg connectivity (2 x M x N)
         pm = np.array([1, -1])[:, None, None]
@@ -211,18 +214,18 @@ class MoM(pv.PolyData):
 
         # consider summing along +/- axis, since this isn't in the notation technicaly specified
         print("computing rwg basis function")
-        self.fm = (ind * (self.lm / self.Am)[..., None])[..., None, None] * rho
+        self._fm = (ind * (self.lm / self.Am)[..., None])[..., None, None] * rho
 
         print("computing rwg basic function divergence (2 x M x N)")
-        self.dfm = ind * (self.lm / self.Am)[..., None]
+        self._dfm = ind * (self.lm / self.Am)[..., None]
 
     def subdivide_by_quadrature(self):
         print("define source points r' at by quadrature (N, n, 3)")
         scheme = quadpy.t2.get_good_scheme(self.deg)
-        self.rp = cp.sum(
+        self._rp = cp.sum(
             self.r[..., None, :] * cp.asarray(scheme.points)[..., None], axis=1
         )
-        self.dSp = self.dS[:, None] * cp.asarray(scheme.weights)
+        self._dSp = self.dS[:, None] * cp.asarray(scheme.weights)
 
     def radiate(self, probe: pv.StructuredGrid, chunks: int = 1):
         """radiate current sources to probe"""
@@ -258,6 +261,3 @@ class MoM(pv.PolyData):
         E2, E2dB = logclip(E2)
         probe.point_data["|E|^2"] = E2
         probe.point_data["|E|^2 (dB)"] = E2dB
-
-
-import matplotlib.pyplot as plt
