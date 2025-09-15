@@ -174,6 +174,13 @@ class Grid(StructuredGrid):
         self["Sr"] = S.real
         self["Si"] = S.imag
 
+        self["Ex"] = E[..., 0]
+        self["Ey"] = E[..., 1]
+        self["Ez"] = E[..., 2]
+        self["Hx"] = H[..., 0]
+        self["Hy"] = H[..., 1]
+        self["Hz"] = H[..., 2]
+
         E2 = np.linalg.norm(E, axis=-1) ** 2
         H2 = np.linalg.norm(H, axis=-1) ** 2
         S0 = np.linalg.norm(S, axis=-1)
