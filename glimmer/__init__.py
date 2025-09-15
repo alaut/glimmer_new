@@ -298,7 +298,6 @@ class HermiteGaussian(Grid):
 
         super().__init__(x, y, z)
 
-        # E, H = EH_Gaussian(self.points_matrix, wx=wx, wy=wy)
         E, H = EH_Hermite(
             self.points_matrix,
             l=self.l,
