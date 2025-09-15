@@ -125,7 +125,7 @@ class Grid(StructuredGrid):
 
         # apply E-phase jump
         match mode:
-            case 'reflect':
+            case "reflect":
                 E1 = E1 * np.exp(1j * self.dphi)
 
         chunks = np.array_split(
