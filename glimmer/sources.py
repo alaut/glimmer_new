@@ -17,8 +17,8 @@ class TransverseElectric(pv.StructuredGrid):
     a: float = None
     omf: float = 1.25
 
-    nr: int = 2 * 2
-    nt: int = 2 * 6 * 2
+    nr: int = 8 * 2
+    nt: int = 8 * 6 * 2
 
     def __post_init__(self):
 
@@ -38,7 +38,7 @@ class TransverseElectric(pv.StructuredGrid):
         ac = self.a * self.m / nu
 
         R, T, Z = np.broadcast_arrays(
-            np.linspace(self.a, ac / 2, self.nr, endpoint=False)[..., None],
+            np.linspace(self.a, ac / 1.5, self.nr, endpoint=False)[..., None],
             np.linspace(0, 2 * np.pi, self.nt),
             0,
         )
