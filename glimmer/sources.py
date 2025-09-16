@@ -38,7 +38,10 @@ class TransverseElectric(pv.StructuredGrid):
         nt = int(np.max([self.m * self.num_lam, 2 * np.pi * self.a / dl]))
 
         R, T, Z = np.meshgrid(
-            np.linspace(self.rmin, self.a, nr), np.linspace(0, 2 * np.pi, nt), 0
+            np.linspace(self.rmin, self.a, nr),
+            np.linspace(0, 2 * np.pi, nt),
+            0,
+            indexing="ij",
         )
 
         super().__init__(R * np.cos(T), R * np.sin(T), Z)
