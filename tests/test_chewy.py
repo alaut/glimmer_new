@@ -31,6 +31,6 @@ vol = Volume(
 )
 
 
-plotter = solve(src, [m1, m2], probes=[vol], prefix="./temp/chewy/mb")
+plotter = solve(lam, src, [m1, m2], probes=[vol], prefix="./temp/chewy/mb")
 plotter.show_grid()
 plotter.show()
