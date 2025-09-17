@@ -10,7 +10,7 @@ import numpy as np
 eta = np.sqrt(mu_0 / epsilon_0)
 
 
-def logclip(ds: pv.DataSet, key: str, dBmin=-30, clip=99.0):
+def logclip(ds: pv.DataSet, key: str, dBmin: float = -30, clip: float = 99):
     """process visualization dataset and re-represent in dB"""
 
     Amax = np.nanpercentile(ds[key], clip)
@@ -121,26 +121,24 @@ def norm(A):
     return cp.linalg.norm(A, axis=-1, keepdims=True)
 
 
-def estimate_chunks(ds1, ds2, dtype_bytes=16, sf=50, verbose=False):
+def estimate_chunks(ds1: pv.DataSet, ds2: pv.DataSet, bytes=16, sf=50, verbose=False):
     """estimate needed chunking given mutual interaction of two pointclouds"""
 
     N1 = ds1.points.shape[0]
     N2 = ds2.points.shape[0]
     mem = cp.cuda.runtime.memGetInfo()[1]
 
-    chunks = int(np.ceil(N1 * 3 * dtype_bytes * sf * N2 / mem))
+    chunks = int(np.ceil(3 * N1 * N2 * bytes * sf / mem))
     if verbose:
         print(f"{N1} x {N2}->\t{chunks:03d} (sf={sf:0.3f})")
 
     return chunks
 
 
-def radiate(ds1: pv.DataSet, ds2: pv.DataSet, mode="radiate", chunks=None):
+def radiate(k1: float, ds1: pv.DataSet, ds2: pv.DataSet, mode="radiate", chunks=None):
     """radiate E/H fields from source object to probe using Stratton-Chu equation"""
 
     start = time.time()
-
-    k1 = ds1._k
 
     tri = ds1.extract_surface()
 
