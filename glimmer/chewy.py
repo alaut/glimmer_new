@@ -246,6 +246,8 @@ def solve(lam, source, optics, probes, prefix=None):
 
     k1 = 2 * np.pi / lam
 
+    start = time.time()
+
     sources = [(source, radiate)]
 
     for optic in optics:
@@ -256,6 +258,8 @@ def solve(lam, source, optics, probes, prefix=None):
     for probe in probes:
         for src, fun in sources:
             fun(k1, src, probe)
+
+    print(f"solved in {time.time()-start:0.1f} s")
 
     plotter = Plot([source, *optics, *probes])
 
