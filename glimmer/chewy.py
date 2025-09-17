@@ -20,38 +20,33 @@ def logclip(ds: pv.DataSet, key: str, dBmin=-30, clip=99.0):
         ds[f"{key} (dB)"] = np.clip(10 * np.log10(ds[key] / Amax), dBmin, 0)
 
 
-def set_fields(ds: pv.DataSet, E=None, H=None, reset=False, k=None):
+def set_fields(ds: pv.DataSet, E=None, H=None):
 
-    if k is not None:
-        ds._k = k
+    ds["||E||^2"] = np.linalg.norm(E, axis=-1) ** 2
+    ds["Er"] = np.real(E)
+    ds["Ei"] = np.imag(E)
 
-    if "Er" in ds.cell_data or "Er" in ds.point_data and not reset:
-        E += ds["Er"] + 1j * ds["Ei"]
+    ds["||H||^2"] = np.linalg.norm(H, axis=-1) ** 2
+    ds["Hr"] = np.real(H)
+    ds["Hi"] = np.imag(H)
 
-    if "Hr" in ds.cell_data or "Hr" in ds.point_data and not reset:
-        H += ds["Hr"] + 1j * ds["Hi"]
 
-    if E is not None:
-        ds["Er"] = np.real(E)[..., None]
-        ds["Ei"] = np.imag(E)[..., None]
+def get_fields(ds: pv.DataSet):
 
-    if H is not None:
-        ds["Hr"] = np.real(H)[..., None]
-        ds["Hi"] = np.imag(H)[..., None]
+    E = ds["Er"] + 1j * ds["Ei"]
+    H = ds["Hr"] + 1j * ds["Hi"]
 
-    # for visualization
-    if H is None:
-        key = "|E|^2"
-        ds[key] = np.linalg.norm(ds["Er"] + 1j * ds["Ei"], axis=-1) ** 2
-    elif E is None:
-        key = "|H|^2"
-        ds[key] = np.linalg.norm(ds["Hr"] + 1j * ds["Hi"], axis=-1) ** 2
-    else:
-        key = "|<S>|"
-        ds[key] = np.linalg.norm(np.real(np.cross(E, np.conj(H), axis=-1)) / 2, axis=-1)
+    return E, H
 
-    logclip(ds, key)
-    ds.set_active_scalars(key)
+
+def add_fields(ds: pv.DataSet, E=None, H=None):
+
+    E0, H0 = get_fields(ds)
+
+    E += E0
+    H += H0
+
+    set_fields(ds, E, H)
 
 
 def Gaussian(w0, lam, num_lam=3, num_waist=3, P0=1):
@@ -74,7 +69,6 @@ def Gaussian(w0, lam, num_lam=3, num_waist=3, P0=1):
         grid,
         E=A[..., None] * np.array([1, 0, 0]),
         H=A[..., None] * np.array([0, 1, 0]) / eta,
-        k=2 * np.pi / lam,
     )
 
     grid._name = f"Gaussian w0=({w0[0]:0.2f}, {w0[1]:0.2f})"
@@ -109,6 +103,8 @@ def Mirror(L, dL, f=None, dz=0):
 
     grid.points[..., 2] += dz
     grid._name = f"Mirror L=-({L[0]:0.2f}, {L[1]:0.2f}), f=({f[0]:0.2f}, {f[1]:0.2f})"
+
+    set_fields(grid, E=np.zeros_like(grid.points), H=np.zeros_like(grid.points))
 
     return grid
 
@@ -194,7 +190,7 @@ def radiate(ds1: pv.DataSet, ds2: pv.DataSet, mode="radiate", chunks=None):
         E2[ind] = cp.nansum(dA1[..., None] * dE, axis=-2).get()
         H2[ind] = cp.nansum(dA1[..., None] * dH, axis=-2).get()
 
-    set_fields(ds2, E=E2, H=H2, k=k1)
+    add_fields(ds2, E=E2, H=H2)
 
     print(f" in {time.time()-start:0.1f} s")
 
@@ -224,6 +220,8 @@ def Volume(d, xlim=0, ylim=0, zlim=0):
     grid = pv.StructuredGrid(X, Y, Z)
     grid._name = f"Volume xlim=({xlim[0]:0.2f}, {xlim[-1]:0.2f}), ylim=({ylim[0]:0.2f}, {ylim[-1]:0.2f}), zlim=({zlim[0]:0.2f}, {zlim[-1]:0.2f})"
 
+    set_fields(grid, E=np.zeros_like(grid.points), H=np.zeros_like(grid.points))
+
     return grid
 
 
@@ -245,19 +243,21 @@ def Plot(objects, plotter=None, cmap="jet"):
     return plotter
 
 
-def solve(source, optics, probes, prefix=None):
+def solve(lam, source, optics, probes, prefix=None):
     """physical optics algorithm"""
+
+    k1 = 2 * np.pi / lam
 
     sources = [(source, radiate)]
 
     for optic in optics:
-        source, fun = sources[-1]
-        fun(source, optic)
+        src, fun = sources[-1]
+        fun(k1, src, optic)
         sources.extend([(optic, negate), (optic, reflect)])
 
     for probe in probes:
-        for source, fun in sources:
-            fun(source, probe)
+        for src, fun in sources:
+            fun(k1, src, probe)
 
     plotter = Plot([source, *optics, *probes])
 
