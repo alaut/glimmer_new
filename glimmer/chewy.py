@@ -121,7 +121,7 @@ def norm(A):
     return cp.linalg.norm(A, axis=-1, keepdims=True)
 
 
-def estimate_chunks(ds1: pv.DataSet, ds2: pv.DataSet, bytes=16, sf=50, verbose=False):
+def estimate_chunks(ds1: pv.DataSet, ds2: pv.DataSet, bytes=16, sf=25, verbose=False):
     """estimate needed chunking given mutual interaction of two pointclouds"""
 
     N1 = ds1.points.shape[0]
@@ -224,7 +224,7 @@ def Volume(d, xlim=0, ylim=0, zlim=0):
 
 
 def Plot(objects, plotter=None, cmap="jet"):
-    print("plotting ...")
+
     start = time.time()
 
     if plotter is None:
@@ -236,7 +236,7 @@ def Plot(objects, plotter=None, cmap="jet"):
         else:
             plotter.add_mesh(obj, cmap=cmap)
 
-    print(f"finished plot ! {time.time()-start:0.1f} s")
+    print(f"plotted in {time.time()-start:0.1f} s")
 
     return plotter
 
@@ -264,6 +264,9 @@ def solve(lam, source, optics, probes, prefix=None):
     plotter = Plot([source, *optics, *probes])
 
     if prefix:
+
+        start = time.time()
+
         os.makedirs(os.path.dirname(prefix), exist_ok=True)
 
         source.save(f"{prefix}.source.vtk")
@@ -273,5 +276,7 @@ def solve(lam, source, optics, probes, prefix=None):
 
         for i, probe in enumerate(probes):
             probe.save(f"{prefix}.probe.{i}.vtk")
+
+        print(f"saved in {time.time()-start:0.1f} s")
 
     return plotter
