@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import pyvista as pv
 
@@ -73,3 +74,13 @@ def rwg_connectivity(con):
     isin = np.all(np.sort(con) == np.sort(con_m)[:, :, None], axis=-1)
 
     return con_m, isin
+
+
+class Timer:
+    def __enter__(self):
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed = time.time() - self.start
+        print(f"Elapsed: {elapsed:.3f} s")
