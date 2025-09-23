@@ -10,6 +10,11 @@ from scipy.constants import mu_0, epsilon_0, c
 eta = np.sqrt(mu_0 / epsilon_0)
 
 
+def set_field(ds, A, key, dtype=np.float32):
+    ds[f"{key}r"] = np.real(A).astype(dtype)
+    ds[f"{key}i"] = np.imag(A).astype(dtype)
+
+
 def get_field(ds, key):
     """retrieve named field component from pyvista DataSet"""
     Ar = ds[f"{key}r"] if f"{key}r" in ds.array_names else np.zeros_like(ds.points)
@@ -20,11 +25,6 @@ def get_field(ds, key):
 def get_fields(ds: pv.DataSet, keys=["E", "H"]):
     """retrieve E/H complex vector fields from pyvista DataSet"""
     return [get_field(ds, key) for key in keys]
-
-
-def set_field(ds, A, key, dtype=np.float32):
-    ds[f"{key}r"] = np.real(A).astype(dtype)
-    ds[f"{key}i"] = np.imag(A).astype(dtype)
 
 
 def add_field(ds: pv.DataSet, A=0, key="E"):
@@ -39,20 +39,12 @@ def add_fields(ds: pv.DataSet, E=None, H=None, J=None):
 
     if E is not None:
         add_field(ds, E, "E")
-        # E = E + E0
 
     if H is not None:
         add_field(ds, H, "H")
-        # H = H + H0
 
     if J is not None:
         add_field(ds, J, "J")
-
-    # ds["Er"] = np.real(E).astype(dtype)
-    # ds["Ei"] = np.imag(E).astype(dtype)
-
-    # ds["Hr"] = np.real(H).astype(dtype)
-    # ds["Hi"] = np.imag(H).astype(dtype)
 
 
 def process_fields(ds: pv.DataSet, keys=["E", "H"], clip=99, dBmin=-30):
