@@ -7,10 +7,10 @@ from scipy.constants import milli
 lam = 3 * milli
 w0 = 10 * milli
 
-num_waist = 3
+num_waist = 2
 num_lam = 3
 
-src = Gaussian(w0=w0, lam=lam, num_lam=num_lam, num_waist=3)
+src = Gaussian(w0=w0, lam=lam, num_lam=num_lam, num_waist=2.5)
 src.rotate_x(3, inplace=True, transform_all_input_vectors=True)
 
 zR = np.pi * w0**2 / lam
@@ -34,7 +34,7 @@ m2.translate([0, 2 * s, s], inplace=True)
 pec = src + m1 + m2
 
 vol = Grid(ds=pec, d=2 * milli, scale=1.2)
-yz = Grid(ds=pec, xlim=0, d=1 / 2 * milli, scale=1.1)
+yz = Grid(ds=pec, xlim=0, d=1 / 4 * milli, scale=1.1)
 xy = Grid(xlim=(-L / 2, L / 2), ylim=(-L / 2, L / 2), d=1 / 4 * milli)
 
 xy1 = xy.translate([0, 0, 5 * milli])
