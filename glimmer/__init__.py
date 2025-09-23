@@ -93,7 +93,7 @@ def Gaussian(w0, lam, num_lam=3, num_waist=3, P0=1):
 
 
 def Mirror(L, dL, f=None, dz=0):
-    """generate rectilinear mirror"""
+    """generate rectilinear mirror with parabolic deformation"""
 
     Lx, Ly = np.array([1, 1]) * np.array(L)
     grid = Grid(d=dL, xlim=(-Lx / 2, Lx / 2), ylim=(-Ly / 2, Ly / 2))
