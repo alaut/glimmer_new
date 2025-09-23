@@ -1,9 +1,11 @@
+from dataclasses import dataclass
+import os
 import cupy as cp
-
-from scipy.constants import mu_0, epsilon_0
+import pyvista as pv
 import numpy as np
 
-eta = np.sqrt(mu_0 / epsilon_0)
+from .tools import Timer
+from . import add_fields, eta, Plot, process_fields
 
 
 def dot(A, B):
@@ -18,18 +20,37 @@ def norm(A):
     return cp.linalg.norm(A, axis=-1, keepdims=True)
 
 
-def StrattonChu(r1, E1, H1, k1, r2, mode="radiate"):
+def estimate_chunks(ds1: pv.DataSet, ds2: pv.DataSet, bytes=16, sf=25, verbose=False):
+    """estimate needed chunking given mutual interaction of two pointclouds"""
 
-    r1 = cp.asarray(r1)
-    E1 = cp.asarray(E1)
-    H1 = cp.asarray(H1)
-    r2 = cp.asarray(r2)
+    N1 = ds1.points.shape[0]
+    N2 = ds2.points.shape[0]
 
-    drdu, drdv = cp.gradient(r1, axis=(0, 1))
-    dSvec = cp.cross(drdv, drdu, axis=-1)
+    available, total = cp.cuda.runtime.memGetInfo()
 
-    dS1 = norm(dSvec)
-    n1 = dSvec / dS1
+    # print(f"GPU: {available/total*100:0.1f}%")
+
+    chunks = int(np.ceil(3 * N1 * N2 * bytes * sf / available))
+    if verbose:
+        print(f"{N1} x {N2}->\t{chunks:03d} (sf={sf:0.3f})")
+
+    return chunks
+
+
+def radiate(k1: float, ds1: pv.DataSet, ds2: pv.DataSet, mode="radiate", chunks=None):
+    """radiate E/H fields from source to probe using Stratton-Chu equation"""
+
+    poly = ds1.extract_surface()
+    poly = poly.compute_cell_sizes()
+    poly = poly.compute_normals()
+    poly = poly.cell_data_to_point_data()
+
+    r1 = cp.array(poly.points)
+    E1 = cp.array(poly["Er"] + 1j * poly["Ei"])
+    H1 = cp.array(poly["Hr"] + 1j * poly["Hi"])
+
+    dA1 = cp.asarray(poly["Area"]) * (1 + poly.is_all_triangles)
+    n1 = cp.asarray(poly["Normals"])
 
     match mode:
         case "reflect":
@@ -39,90 +60,95 @@ def StrattonChu(r1, E1, H1, k1, r2, mode="radiate"):
             E1 = -E1
             H1 = -H1
 
-    r = r2[..., None, None, :] - r1
+    r2 = cp.asarray(ds2.points)
+    E2 = np.empty(r2.shape, dtype=complex)
+    H2 = np.empty(r2.shape, dtype=complex)
 
-    R = norm(r)
+    num_chunks = estimate_chunks(ds1, ds2) if chunks is None else chunks
 
-    G = cp.exp(1j * k1 * R) / (4 * cp.pi * R)
-    dG = r * (G / R**2 - 1j * k1 * G / R)
+    with Timer(f"{mode}\t{ds1.points.shape} onto {ds2.points.shape}"):
 
-    Js = cross(n1, H1)
-    Ms = cross(E1, n1)
+        for ind in np.array_split(np.arange(r2.shape[0]), num_chunks):
 
-    dE = cross(dG, Ms) + 1j * k1 * Js * G * eta + dot(n1, E1) * dG
-    dH = cross(Js, dG) + 1j * k1 * Ms * G / eta + dot(n1, H1) * dG
+            r = r2[ind, None, :] - r1
 
-    E2 = cp.nansum(dS1 * dE, axis=(-3, -2))
-    H2 = cp.nansum(dS1 * dH, axis=(-3, -2))
+            R = norm(r)
 
-    return E2.get(), H2.get()
+            G = cp.exp(1j * k1 * R) / (4 * cp.pi * R)
+            dG = r * (G / R**2 - 1j * k1 * G / R)
 
+            Js = cross(n1, H1)
+            Ms = cross(E1, n1)
 
-def EH_Gaussian(r1, wx, wy, P0=1):
+            dE = cross(dG, Ms) + 1j * k1 * Js * G * eta + dot(n1, E1) * dG
+            dH = cross(Js, dG) + 1j * k1 * Ms * G / eta + dot(n1, H1) * dG
 
-    x, y, z = cp.moveaxis(cp.asarray(r1), -1, 0)
+            E2[ind] = cp.nansum(dA1[..., None] * dE, axis=-2).get()
+            H2[ind] = cp.nansum(dA1[..., None] * dH, axis=-2).get()
 
-    I0 = 2 * P0 / (cp.pi * wx * wy)
-    A = (I0 * eta) ** 0.5 * cp.exp(-(x**2) / wx**2 - y**2 / wy**2)
-
-    E = A * cp.array([1, 0, 0])
-    H = A * cp.array([0, 1, 0]) / eta
-
-    return E.get(), H.get()
+    add_fields(ds2, E=E2, H=H2)
 
 
-def EH_Hermite(r, l, m, c, wx, wy):
-    l = np.atleast_1d(l)
-    m = np.atleast_1d(m)
-    c = np.atleast_1d(c)
-
-    mf = factorial(l)
-    nf = factorial(m)
-
-    x = r[..., 0]
-    y = r[..., 1]
-
-    # wx, wy = self.get_waists()
-
-    Hm = hermite(l, 2**0.5 * x / wx)
-    Hn = hermite(m, 2**0.5 * y / wy)
-
-    A0 = Hm * Hn / np.sqrt(np.pi * wx * wy * 2.0 ** (l + m - 1) * mf * nf)
-
-    X = np.exp(-(x**2) / wx**2)[..., None]
-    Y = np.exp(-(y**2) / wy**2)[..., None]
-    A = np.sum(c * A0 * X * Y, axis=-1)
-
-    E = A[..., None] * np.array([1, 0, 0])
-    H = A[..., None] * np.array([0, 1, 0]) / eta
-    return E, H
+def reflect(*args, **kwargs):
+    return radiate(*args, **kwargs, mode="reflect")
 
 
-def hermite(m, x):
-    """evaluates hermite polynomial H_m(x)"""
-
-    y = (m == 0) + 2 * (m == 1) * x[..., None]
-
-    ind = m > 1
-
-    if any(ind):
-
-        h1 = 2 * x[..., None] * hermite(m[ind] - 1, x)
-        h2 = 2 * (m[ind] - 1) * hermite(m[ind] - 2, x)
-
-        y[..., ind] = h1 - h2
-
-    return y
+def negate(*args, **kwargs):
+    return radiate(*args, **kwargs, mode="negate")
 
 
-def factorial(n):
-    """returns factorial"""
+@dataclass
+class Solver:
+    """Stratton-Chu physical optics solver"""
 
-    y = (n == 0).astype(float) + (n == 1).astype(float)
+    lam: float
 
-    ind = n > 1
+    source: pv.DataSet
+    optics: list = None
+    probes: list = None
 
-    if any(ind):
-        y[ind] = n[ind] * factorial(n[ind] - 1)
+    def solve(self):
+        """radiate source through optics and onto probes"""
 
-    return y
+        with Timer("Solving ..."):
+
+            k = 2 * np.pi / self.lam
+
+            sources = [(self.source, radiate)]
+
+            for optic in self.optics:
+                src, fun = sources[-1]
+                fun(k, src, optic)
+                sources.extend([(optic, negate), (optic, reflect)])
+
+            for probe in self.probes:
+                for src, fun in sources:
+                    fun(k, src, probe)
+
+            for obj in [self.source, *self.optics, *self.probes]:
+                process_fields(obj)
+                obj.set_active_scalars("||E||^2")
+
+    def save(self, prefix):
+        """save pyvista objects to vtk format"""
+
+        with Timer("saving ..."):
+
+            os.makedirs(os.path.dirname(prefix), exist_ok=True)
+
+            mb = pv.MultiBlock([self.source, *self.optics, *self.probes])
+            mb.save(f"{prefix}.vtm")
+
+            self.source.save(f"{prefix}.source.vtk")
+
+            for i, optic in enumerate(self.optics):
+                optic.save(f"{prefix}.optic.{i}.vtk")
+
+            for i, probe in enumerate(self.probes):
+                probe.save(f"{prefix}.probe.{i}.vtk")
+
+    def plot(self):
+
+        plotter = Plot([self.source, *self.optics, *self.probes])
+
+        return plotter

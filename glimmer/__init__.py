@@ -1,521 +1,168 @@
-import os
-from pyvista import StructuredGrid, Plotter
-from dataclasses import dataclass
 import numpy as np
-
-from .chu import StrattonChu, EH_Hermite, EH_Gaussian
 
 import pyvista as pv
 
-pv.global_theme.colorbar_orientation = "vertical"
-import cupy as cp
+from .tools import Timer
 
 from scipy.constants import mu_0, epsilon_0
-import numpy as np
+
 
 eta = np.sqrt(mu_0 / epsilon_0)
 
 
-def span(L, dL):
-
-    Lx, Ly = np.array(L) * np.array([1, 1])
-
-    x = np.linspace(-Lx / 2, Lx / 2, int(Lx / dL) + 1)
-    y = np.linspace(-Ly / 2, Ly / 2, int(Ly / dL) - 1)
+def get_fields(ds: pv.DataSet):
+    """retrieve E/H complex vector fields from pyvista DataSet"""
 
-    X, Y = np.meshgrid(x, y)
+    Er = ds["Er"] if "Er" in ds.array_names else np.zeros_like(ds.points)
+    Ei = ds["Ei"] if "Ei" in ds.array_names else np.zeros_like(ds.points)
+    Hr = ds["Hr"] if "Hr" in ds.array_names else np.zeros_like(ds.points)
+    Hi = ds["Hi"] if "Hi" in ds.array_names else np.zeros_like(ds.points)
 
-    return X, Y
-
+    E = Er + 1j * Ei
+    H = Hr + 1j * Hi
 
-def logclip(A0, clip=99.5, dBmin=-30):
-
-    Amax = np.nanpercentile(A0, clip)
-    A0 = np.clip(A0, 0, Amax)
+    return E, H
 
-    with np.errstate(divide="ignore", invalid="ignore"):
-        A0dB = np.clip(10 * np.log10(A0 / Amax), dBmin, 0)
-
-    return A0, A0dB
-
-
-class Grid(StructuredGrid):
-
-    chunks: int = 1
-    k: float = None
 
-    def __init__(self, *args, **kwargs):
-
-        super().__init__(*args, **kwargs)
+def add_fields(ds: pv.DataSet, E=None, H=None, dtype=np.float32):
+    """add E/H complex vector fields to pyvista DataSet"""
 
-        self.set_fields()
+    E0, H0 = get_fields(ds)
 
-    def round_repr(self, decimals=3):
-        """round the attributes visible in dataclass repr"""
+    if E is not None:
+        E = E + E0
 
-        for k, v in self.__dict__.items():
-            if "_" not in k and v is not None:
-                try:
-                    self.__dict__[k] = tuple(float(round(x, decimals)) for x in v)
-                except:
-                    self.__dict__[k] = float(round(v, decimals))
+    if H is not None:
+        H = H + H0
 
-    def translate(
-        self, translation, inplace=True, transform_all_input_vectors=True, **kwargs
-    ):
-        return super().translate(
-            translation,
-            inplace=inplace,
-            transform_all_input_vectors=transform_all_input_vectors,
-            **kwargs,
-        )
+    ds["Er"] = np.real(E).astype(dtype)
+    ds["Ei"] = np.imag(E).astype(dtype)
 
-    def rotate_x(self, angle, inplace=True, transform_all_input_vectors=True, **kwargs):
-        return super().rotate_x(
-            angle,
-            inplace=inplace,
-            transform_all_input_vectors=transform_all_input_vectors,
-            **kwargs,
-        )
+    ds["Hr"] = np.real(H).astype(dtype)
+    ds["Hi"] = np.imag(H).astype(dtype)
 
-    def rotate_y(self, angle, inplace=True, transform_all_input_vectors=True, **kwargs):
-        return super().rotate_y(
-            angle,
-            inplace=inplace,
-            transform_all_input_vectors=transform_all_input_vectors,
-            **kwargs,
-        )
 
-    def rotate_z(self, angle, inplace=True, transform_all_input_vectors=True, **kwargs):
-        return super().rotate_z(
-            angle,
-            inplace=inplace,
-            transform_all_input_vectors=transform_all_input_vectors,
-            **kwargs,
-        )
+def process_fields(ds: pv.DataSet, clip=99, dBmin=-30):
+    """process complex vector fields as scalar field amplitude"""
 
-    def transform(
-        self, transformation, inplace=True, transform_all_input_vectors=True, **kwargs
-    ):
-        return super().transform(
-            transformation,
-            inplace=inplace,
-            transform_all_input_vectors=transform_all_input_vectors,
-            **kwargs,
-        )
+    E, H = get_fields(ds)
 
-    def rotation(
-        self, rotation, inplace=True, transform_all_input_vectors=True, **kwargs
-    ):
-        return super().rotation(
-            rotation,
-            inplace=inplace,
-            transform_all_input_vectors=transform_all_input_vectors,
-            **kwargs,
-        )
+    data = {}
 
-    def radiate(self, other: StructuredGrid, mode="radiate"):
+    for key, A in [("E", E), ("H", H)]:
 
-        print(
-            f"{mode} {self.__repr__()} onto {other.chunks} chunks of {other.__repr__()}"
-        )
+        I = np.linalg.norm(A, axis=-1) ** 2
+        I = np.clip(I, max=np.nanpercentile(I, clip))
 
-        E1, H1 = self.get_fields()
+        data[f"||{key}||^2"] = I
 
-        # apply E-phase jump
-        match mode:
-            case "reflect":
-                E1 = E1 * np.exp(1j * self.dphi)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            IdB = np.clip(10 * np.log10(I / I.max()), dBmin, 0)
 
-        chunks = np.array_split(
-            np.reshape(other.points_matrix, (-1, 3)), other.chunks, axis=0
-        )
+            data[f"||{key}||^2 (dB)"] = IdB
 
-        inputs = {
-            "r1": self.points_matrix[..., 0, :],
-            "E1": E1[..., 0, :],
-            "H1": H1[..., 0, :],
-            "k1": self.k,
-            "mode": mode,
-        }
+    for k, v in data.items():
+        ds[k] = v
 
-        F = [StrattonChu(**inputs, r2=chunk) for chunk in chunks]
 
-        E2, H2 = zip(*F)
+def Gaussian(w0, lam, num_lam=3, num_waist=3, P0=1):
+    """generate gaussian source object"""
 
-        E2 = np.reshape(np.concatenate(E2), other.points_matrix.shape)
-        H2 = np.reshape(np.concatenate(H2), other.points_matrix.shape)
+    w0 = np.array([1, 1]) * np.array(w0)
+    Lx, Ly = w0 * num_waist
 
-        E, H = other.get_fields()
+    grid = Grid(xlim=(-Lx / 2, Lx / 2), ylim=(-Ly / 2, Ly / 2), d=lam / num_lam)
 
-        other.k = self.k
-        other.set_fields(E + E2, H + H2)
+    X = grid.points[..., 0] / w0[0]
+    Y = grid.points[..., 1] / w0[1]
 
-    def negate(self, probe, **kwargs):
-        self.radiate(probe, mode="negate", **kwargs)
+    I0 = 2 * P0 / (np.pi * w0[0] * w0[1])
+    A = np.sqrt(I0 * eta) * np.exp(-(X**2)) * np.exp(-(Y**2))
 
-    def reflect(self, probe, **kwargs):
-        self.radiate(probe, mode="reflect", **kwargs)
+    add_fields(
+        grid,
+        E=A[..., None] * np.array([1, 0, 0]),
+        H=A[..., None] * np.array([0, 1, 0]) / eta,
+    )
 
-    def set_fields(self, E=None, H=None):
+    return grid
 
-        E = np.zeros_like(self.points_matrix) if E is None else E
-        H = np.zeros_like(self.points_matrix) if H is None else H
 
-        E = np.reshape(E, shape=(-1, 3), order="F")
-        H = np.reshape(H, shape=(-1, 3), order="F")
+def Mirror(L, dL, f=None, dz=0):
+    """generate rectilinear mirror"""
 
-        S = 0.5 * np.real(np.cross(E, np.conj(H), axis=-1))
+    Lx, Ly = np.array([1, 1]) * np.array(L)
+    grid = Grid(d=dL, xlim=(-Lx / 2, Lx / 2), ylim=(-Ly / 2, Ly / 2))
 
-        self["Er"] = E.real
-        self["Ei"] = E.imag
-        self["Hr"] = H.real
-        self["Hi"] = H.imag
-        self["Sr"] = S.real
-        self["Si"] = S.imag
+    # apply parabolic deformation
+    if f is not None:
+        fx, fy = np.array([1, 1]) * np.array(f)
+        x = grid.points[..., 0]
+        y = grid.points[..., 1]
+        grid.points[..., 2] += -(x**2 / fx + y**2 / fy) / 4
 
-        self["Ex"] = E[..., 0]
-        self["Ey"] = E[..., 1]
-        self["Ez"] = E[..., 2]
-        self["Hx"] = H[..., 0]
-        self["Hy"] = H[..., 1]
-        self["Hz"] = H[..., 2]
+    grid.points[..., 2] += dz
 
-        E2 = np.linalg.norm(E, axis=-1) ** 2
-        H2 = np.linalg.norm(H, axis=-1) ** 2
-        S0 = np.linalg.norm(S, axis=-1)
+    return grid
 
-        self["|E|^2"], self["|E|^2 (dB)"] = logclip(E2)
-        self["|H|^2"], self["|E|^2 (dB)"] = logclip(H2)
-        self["|<S>|"], self["|<S>| (dB)"] = logclip(S0)
 
-        self.set_active_vectors("Sr")
-        self.set_active_scalars("|E|^2")
+def Grid(d, xlim=None, ylim=None, zlim=None, ds: pv.DataSet = None, scale=1.0):
+    """yields structured Plane/Grid given bounds or bounding DataSet"""
 
-    def get_fields(self):
+    if ds is not None:
 
-        E = self["Er"] + 1j * self["Ei"]
-        H = self["Hr"] + 1j * self["Hi"]
+        ds = ds.scale(scale, point=ds.center)
 
-        E = np.reshape(E, self.points_matrix.shape, order="F")
-        H = np.reshape(H, self.points_matrix.shape, order="F")
+        xmin, xmax, ymin, ymax, zmin, zmax = ds.bounds
 
-        return E, H
+        if xlim is None:
+            xlim = (xmin, xmax)
 
-    def get_phase(self):
+        if ylim is None:
+            ylim = (ymin, ymax)
 
-        E, H = self.get_fields()
+        if zlim is None:
+            zlim = (zmin, zmax)
 
-        for i, k in enumerate("xyz"):
-            e = E[..., i].reshape(self.points_matrix.shape[:2], order="F")
+    if xlim is None:
+        xlim = 0
+    if ylim is None:
+        ylim = 0
+    if zlim is None:
+        zlim = 0
 
-            phi = np.angle(e)
-            phi_u = unwrap_phase(phi)
-            m, n = phi_u.shape
-            phi_u = phi_u - phi_u[int(m / 2), int(n / 2)]
+    if np.array(xlim).size == 2:
+        xlim = np.linspace(xlim[0], xlim[1], int((xlim[1] - xlim[0]) / d))
 
-            self[f"phi_{k}"] = phi.reshape(-1, order="F")
+    if np.array(ylim).size == 2:
+        ylim = np.linspace(ylim[0], ylim[1], int((ylim[1] - ylim[0]) / d))
 
-            self[f"phi_{k} (unwrapped)"] = phi_u.reshape(-1, order="F")
+    if np.array(zlim).size == 2:
+        zlim = np.linspace(zlim[0], zlim[1], int((zlim[1] - zlim[0]) / d))
 
+    X, Y, Z = np.meshgrid(xlim, ylim, zlim, indexing="ij")
 
-from skimage.restoration import unwrap_phase
+    return pv.StructuredGrid(X.astype(float), Y.astype(float), Z.astype(float))
 
 
-@dataclass
-class Volume(Grid):
+def Plot(objects, plotter=None, cmap="jet"):
 
-    xlim: tuple = 0
-    ylim: tuple = 0
-    zlim: tuple = 0
+    with Timer("Plotting ..."):
 
-    d: float = 1
+        pv.global_theme.cmap = cmap
 
-    chunks: int = 1
+        if plotter is None:
+            plotter = pv.Plotter()
 
-    def __post_init__(self, **kwargs):
+        for ds in objects:
 
-        x, y, z = np.meshgrid(
-            self.limits(self.xlim),
-            self.limits(self.ylim),
-            self.limits(self.zlim),
-        )
+            try:
+                distance = ds.length / np.linalg.norm(ds.dimensions)
+                plotter.add_volume(ds, cmap=cmap, opacity_unit_distance=distance)
+            except:
+                plotter.add_mesh(ds, cmap=cmap)
 
-        super().__init__(x, y, z, **kwargs)
+    plotter.enable_parallel_projection()
+    plotter.show_grid()
 
-    def limits(self, lim):
-        try:
-            return np.linspace(*lim, int((lim[1] - lim[0]) / self.d))
-        except:
-            return float(lim)
-
-
-@dataclass
-class Gaussian(Grid):
-
-    w0: float
-    lam: float
-
-    num_lam: float = 3
-    num_waist: float = 3
-
-    P0: float = 1
-
-    def __post_init__(self):
-
-        self.k = 2 * np.pi / self.lam
-
-        wx, wy = np.array([1, 1]) * np.array(self.w0)
-
-        x, y = span((wx * self.num_waist, wy * self.num_waist), self.lam / self.num_lam)
-
-        x, y, z = np.broadcast_arrays(x, y, 0)
-
-        super().__init__(x, y, z)
-
-        E, H = EH_Gaussian(self.points_matrix, wx=wx, wy=wy)
-
-        self.set_fields(E, H)
-
-
-@dataclass
-class HermiteGaussian(Grid):
-    w0: float
-
-    c: float
-    m: np.array
-    l: np.array
-
-    lam: float
-
-    num_lam: float = 3
-    num_waist: float = 3
-
-    P0: float = 1
-
-    def __post_init__(self):
-
-        self.k = 2 * np.pi / self.lam
-
-        wx, wy = np.array([1, 1]) * np.array(self.w0)
-
-        x, y = span((wx * self.num_waist, wy * self.num_waist), self.lam / self.num_lam)
-
-        x, y, z = np.broadcast_arrays(x, y, 0)
-
-        super().__init__(x, y, z)
-
-        E, H = EH_Hermite(
-            self.points_matrix,
-            l=self.l,
-            m=self.m,
-            c=self.c,
-            wx=wx,
-            wy=wy,
-        )
-
-        self.set_fields(E, H)
-
-
-@dataclass
-class Mirror(Grid):
-
-    L: tuple
-    dL: float
-
-    f: float = None
-
-    chunks: int = 1
-
-    dz: np.array = 0
-    dphi: np.array = 0
-
-    def __post_init__(self, **kwargs):
-
-        x, y = span(self.L, self.dL)
-
-        if self.f is not None:
-            fx, fy = np.array(self.f) * np.array([1, 1])
-
-            z = -(x**2) / (4 * fx) - y**2 / (4 * fy)
-        else:
-            z = np.zeros_like(x)
-
-        super().__init__(x, y, z + self.dz, **kwargs)
-
-        # self.round_repr()
-
-
-@dataclass
-class Problem:
-
-    source: object
-    optics: list = ()
-    probes: list = ()
-
-    cmap: str = "jet"
-
-    interactive: bool = False
-
-    def solve(self):
-
-        # for obj in [self.source, *self.optics, *self.probes]:
-        #     obj.round_repr()
-
-        sources = [self.source.radiate]
-
-        for optic in self.optics:
-            sources[-1](optic)
-            sources.extend([optic.negate, optic.reflect])
-
-        for probe in self.probes:
-            for source in sources:
-                source(probe)
-
-        print("solved !")
-
-    def update_scene(self):
-
-        for obj, actor in self.actors:
-            obj.transform(actor.GetMatrix())
-
-            actor.SetUserTransform(None)
-            actor.SetPosition(0, 0, 0)
-            actor.SetOrientation(0, 0, 0)
-            actor.SetScale(1, 1, 1)
-
-        for obj in [*self.probes, *self.optics]:
-            obj.set_fields()
-
-        self.solve()
-
-        for i, (obj, actor) in enumerate(self.actors):
-            if obj.dimensionality == 3:
-                self.plotter.remove_actor(actor)
-                new_actor = self.plotter.add_volume(
-                    obj,
-                    clim=self.clim,
-                    cmap=self.cmap,
-                    opacity_unit_distance=obj.length / np.linalg.norm(obj.dimensions),
-                )
-                self.actors[i] = (obj, new_actor)
-
-        self.plotter.render()
-
-    def plot(self, scalars="|E|^2"):
-
-        self.plotter = Plotter()
-
-        objects = [*self.probes, *self.optics, self.source]
-
-        all_scalars = np.concat([np.ravel(obj[scalars]) for obj in objects])
-
-        self.clim = (np.nanmin(all_scalars), np.nanmax(all_scalars))
-
-        def add_object(obj):
-            if obj.dimensionality == 3:
-                actor = self.plotter.add_volume(
-                    obj,
-                    clim=self.clim,
-                    cmap=self.cmap,
-                    opacity_unit_distance=obj.length / np.linalg.norm(obj.dimensions),
-                    scalars=scalars,
-                )
-            else:
-                actor = self.plotter.add_mesh(
-                    obj,
-                    clim=self.clim,
-                    cmap=self.cmap,
-                    # opacity="linear",
-                    scalars=scalars,
-                )
-
-            return actor
-
-        self.actors = [(obj, add_object(obj)) for obj in objects]
-
-        # self.plotter.enable_parallel_projection()
-        # self.plotter.show_grid()
-
-        self.plotter.add_key_event("u", self.update_scene)
-        self.plotter.add_key_event("i", self.toggle_interactive)
-
-        return self.plotter
-
-    def toggle_interactive(self):
-
-        if self.interactive:
-            self.plotter.enable_trackball_style()
-            self.interactive = False
-        else:
-            self.plotter.enable_trackball_actor_style()
-            self.interactive = True
-
-    def save(self, name):
-
-        os.makedirs(os.path.dirname(name), exist_ok=True)
-
-        self.source.save(f"{name}.source.vtk")
-
-        for i, optic in enumerate(self.optics):
-            optic.save(f"{name}.optic.{i}.vtk")
-
-        for i, probe in enumerate(self.probes):
-            probe.save(f"{name}.probe.{i}.vtk")
-
-
-# @dataclass
-
-
-# @dataclass
-# class HermiteGaussian(Grid):
-
-#     w0: tuple
-#     lam: float
-
-#     l: int = 0
-#     m: int = 0
-#     c: complex = 1
-
-#     num_waist: float = 3
-#     num_lam: float = 3
-
-#     rotation: tuple = (0, 0, 0)
-#     position: tuple = (0, 0, 0)
-
-#     def __post_init__(self):
-
-#         self.make_grid()
-#         self.set_fields()
-#         self.rotate(*self.rotation)
-#         self.translate(*self.position)
-
-#     def get_waists(self):
-
-#         try:
-#             wx, wy = self.w0
-#         except:
-#             wx = wy = self.w0
-
-#         return wx, wy
-
-#     def make_grid(self):
-
-#         wx, wy = self.get_waists()
-
-#         Lx = wx * self.num_waist
-#         Ly = wy * self.num_waist
-
-#         nx = int(Lx / (self.lam / self.num_lam))
-#         ny = int(Ly / (self.lam / self.num_lam))
-
-#         x = Lx / 2 * cp.linspace(-1.0, 1.0, nx + 1)
-#         y = Ly / 2 * cp.linspace(-1.0, 1.0, ny - 1)
-#         z = cp.array([0.0])
-
-#         self.r = cp.squeeze(cp.stack(cp.meshgrid(x, y, z), axis=-1))
-
-#     def set_fields(self):
-#         """goldsmith equation 2.6.2"""
-
-#
+    return plotter
