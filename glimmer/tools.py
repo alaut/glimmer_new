@@ -112,7 +112,7 @@ def remesh(poly: pv.PolyData, dl=None, subdivisions=None, target_vertices=None):
     # Create remeshed output
     remeshed = clus.create_mesh()
 
-    remeshed = remeshed.interpolate(poly, radius=1e-3)  # , sharpness=2e-3)
+    remeshed = remeshed.interpolate(poly, radius=1e-3)
 
     return remeshed
 
@@ -136,9 +136,9 @@ def integrate_power(ds: pv.DataSet):
 
     grid = ds.extract_surface()
 
-    grid = grid.point_data_to_cell_data()
-    grid = grid.compute_cell_sizes(area=True)
+    grid = grid.compute_cell_sizes()
     grid = grid.compute_normals()
+    grid = grid.cell_data_to_point_data()
 
     dS = grid["Area"]
     n = grid["Normals"]
