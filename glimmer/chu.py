@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 import cupy as cp
 import pyvista as pv
@@ -104,8 +104,8 @@ class Solver:
     lam: float
 
     source: pv.DataSet
-    optics: list = None
-    probes: list = None
+    optics: list = field(default_factory=list)
+    probes: list = field(default_factory=list)
 
     def solve(self):
         """radiate source through optics and onto probes"""
