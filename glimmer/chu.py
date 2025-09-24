@@ -110,7 +110,7 @@ class Solver:
     def solve(self):
         """radiate source through optics and onto probes"""
 
-        with Timer("Solving ..."):
+        with Timer("Solving"):
 
             k = 2 * np.pi / self.lam
 

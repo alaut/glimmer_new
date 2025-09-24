@@ -8,17 +8,8 @@ import pyvista as pv
 import cupy as cp
 import numpy as np
 
+from . import *
 
-from . import (
-    mu_0,
-    epsilon_0,
-    c,
-    Plot,
-    get_field,
-    process_fields,
-    set_field,
-    add_field,
-)
 from .tools import Timer, remesh
 
 
@@ -31,15 +22,17 @@ class Solver:
     probes: list = field(default_factory=list)
 
     chunks: int = 32
-    tolerance: float = 1e-6
 
+    tolerance: float = None
     remesh: float = None
 
     def __post_init__(self):
 
         self.tri = self.ds.extract_surface()
         self.tri.triangulate(inplace=True)
-        self.tri.clean(inplace=True, tolerance=self.tolerance)
+
+        if self.tolerance is not None:
+            self.tri.clean(inplace=True, tolerance=self.tolerance)
 
         if self.remesh is not None:
             self.tri = remesh(self.tri, self.remesh)
@@ -50,43 +43,43 @@ class Solver:
         k = 2 * np.pi / self.lam
         omega = k * c
 
-        with Timer("Build Face Connectivity"):
+        with Timer("Building Face Connectivity"):
             con = get_connectivity(self.tri)
 
-        with Timer("Generate RWG connectivity"):
+        with Timer("Generating RWG connectivity"):
             con_m, isin = rwg(con)
 
-        with Timer("Subdivide faces by quadrature"):
+        with Timer("Subdividing faces by quadrature"):
             rp, dSp = subdivide_faces_by_quadrature(self.tri, con)
 
-        with Timer("Compute RWG data"):
+        with Timer("Computing RWG basis data"):
             rm, lm, rmc, Am, Emc, rhomc = get_rwg_geometry(self.tri, con_m)
 
-        with Timer("Build RWG basis functions"):
+        with Timer("Building RWG basis functions"):
             fm, dfm = build_basis_functions(rp, rm, lm, Am, isin)
 
-        with Timer("Generate Green's Function"):
+        with Timer("Generating Green's Function"):
             Gm = green_function(rmc, rp, k)
 
-        with Timer("Assemble scalar potential matrices"):
+        with Timer("Assembling scalar potentials"):
             phi = assemble_scalar_potential(Gm * dSp, dfm, omega)
 
-        with Timer("Assemble vector potential matrices"):
+        with Timer("Assembling vector potentials"):
             Avec = assemble_vector_potential(Gm * dSp, fm)
 
-        with Timer("Build excitation vector"):
+        with Timer("Building excitation vector"):
             V = excitation_vector(lm, Emc, rhomc)
 
-        with Timer("Build impedance matrix"):
+        with Timer("Building impedance matrix"):
             Z = impedance_matrix(lm, omega, Avec, rhomc, phi)
 
-        with Timer("solve currents GMRES"):
+        with Timer("Solving coefficients (GMRES)"):
             I = solve_currents(Z, V)
 
-        with Timer("solve sources by integrate currents"):
+        with Timer("Integrating coefficients"):
             J = integrate_currents(I, fm, dSp)
 
-        with Timer("setting fields"):
+        with Timer("Setting surface currents"):
             set_field(self.tri, A=J.get(), key="J")
             process_fields(self.tri, keys="J")
             self.tri.set_active_scalars("||J||^2")
@@ -203,9 +196,10 @@ def get_rwg_geometry(tri, con_m):
     v = rm[1] - rm[-1]
     Am = 0.5 * cp.linalg.norm(cp.cross(u, v, axis=-1), axis=-1)
 
-    # RWG fields (at vertices, centroids)
+    # RWG fields at vertices
     Em = cp.asarray(get_field(tri, "E")[con_m])
-    # Em = cp.asarray(get_field(tri, "E")[con_m])
+
+    # RWG fields at centroids)
     Emc = cp.mean(Em, axis=0)
 
     # RWG centroid to vertex
@@ -233,7 +227,7 @@ def green_function(rmc, rp, k):
     """Return Green's function at quadrature points"""
     Rm = cp.linalg.norm(cp.asarray(rmc[..., None, None, :]) - cp.asarray(rp), axis=-1)
     Gm = cp.exp(-1j * k * Rm) / Rm
-    # G[~cp.isfinite(G)] = 0
+    Gm[~cp.isfinite(Gm)] = 0
     return Gm
 
 
@@ -251,7 +245,6 @@ def assemble_scalar_potential(GmdS, dfm, omega):
     for i in range(2):
         phi[i] = GdSmp[i] @ csr_matrix(dfpn[i])
 
-    # eq. 20
     return -1 / (4 * np.pi * 1j * omega * epsilon_0) * phi
 
 
@@ -288,6 +281,7 @@ def impedance_matrix(lm, omega, Avec, rhomc, phi):
 
 
 def solve_currents(Z, V):
+    """Rao 1982 eq. 16"""
     I, info = gmres(Z, V)
     if info > 0:
         raise RuntimeError("GMRES did not converge")
