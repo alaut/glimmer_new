@@ -152,7 +152,7 @@ def Grid(d, xlim=None, ylim=None, zlim=None, ds: pv.DataSet = None, scale=1.0):
 
 def Plot(objects, plotter=None, cmap="jet"):
 
-    with Timer("Plotting ..."):
+    with Timer("Plotting"):
 
         pv.global_theme.cmap = cmap
 
