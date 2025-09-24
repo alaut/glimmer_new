@@ -89,19 +89,20 @@ class Solver:
             process_fields(probe, keys="E")
             probe.set_active_scalars("||E||^2")
 
+    def save(self, prefix):
+
+        with Timer("Saving"):
+
+            os.makedirs(os.path.dirname(prefix), exist_ok=True)
+
+            mb = pv.MultiBlock([*self.probes, self.tri])
+            mb.save(f"{prefix}.vtm")
+
     def plot(self):
 
         plotter = Plot([self.tri, *self.probes])
 
         return plotter
-
-    def save(self, prefix):
-        with Timer("saving ..."):
-
-            os.makedirs(os.path.dirname(prefix), exist_ok=True)
-
-            for i, obj in enumerate([self.ds, self.tri, *self.probes]):
-                obj.save(f"{prefix}.{i:03d}.vtk")
 
 
 def rwg(con):
@@ -307,8 +308,7 @@ def radiate(k1: float, ds1: pv.DataSet, ds2: pv.DataSet, chunks: int = 8):
 
     r2 = ds2.points
 
-    # print()
-    with Timer(f"radiating EFIE int {chunks} chunks..."):
+    with Timer(f"Radiating EFIE into {chunks} chunks"):
         E = np.empty_like(r2, dtype=complex)
         for ind in np.array_split(np.arange(r2.shape[0]), chunks):
             E[ind] = efie(k1, r1, dS1, J, divJ, r2[ind])
