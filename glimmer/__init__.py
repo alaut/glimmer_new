@@ -57,12 +57,10 @@ def process_fields(ds: pv.DataSet, keys=["E", "H"], clip=99, dBmin=-30):
         I = np.linalg.norm(A, axis=-1) ** 2
         I = np.clip(I, max=np.nanpercentile(I, clip))
 
+        IdB = np.clip(10 * np.log10(I / I.max()), dBmin, 0)
+
         ds[f"||{key}||^2"] = I
-
-        with np.errstate(divide="ignore", invalid="ignore"):
-            IdB = np.clip(10 * np.log10(I / I.max()), dBmin, 0)
-
-            ds[f"||{key}||^2 (dB)"] = IdB
+        ds[f"||{key}||^2 (dB)"] = IdB
 
 
 def Gaussian(w0, lam, num_lam=3, num_waist=3, P0=1):
