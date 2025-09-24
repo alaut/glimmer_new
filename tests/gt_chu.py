@@ -1,20 +1,26 @@
 from glimmer.chu import Solver
-from glimmer.templates.gt import src, m1, m2, yz, vol, lam, xy2, xy1, xz
+from glimmer.templates import gaussian_telescope as gt
+from glimmer.tools import integrate_power
+
 
 solver = Solver(
-    lam=lam,
-    source=src,
-    optics=[m1, m2],
+    lam=gt.lam,
+    source=gt.src,
+    optics=[gt.m1, gt.m2],
     probes=[
-        # vol,
-        yz,
-        xz,
-        xy1,
-        xy2,
+        gt.vol,
+        gt.yz,
+        gt.xy1,
+        gt.xz,
+        gt.xy2,
     ],
 )
 
 # solver.plot().show()
 solver.solve()
-solver.save("./temp/chu-mb/gt")
+
+for obj in [solver.source, *solver.optics, *solver.probes]:
+    integrate_power(obj)
+
+solver.save("./temp/gt/chu")
 solver.plot().show()

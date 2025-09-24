@@ -10,7 +10,7 @@ w0 = 10 * milli
 num_waist = 2
 num_lam = 3
 
-src = Gaussian(w0=w0, lam=lam, num_lam=num_lam, num_waist=3)
+src = Gaussian(w0=w0, lam=lam, num_lam=num_lam, num_waist=2)
 src.rotate_x(3, inplace=True, transform_all_input_vectors=True)
 
 zR = np.pi * w0**2 / lam
