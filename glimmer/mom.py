@@ -1,246 +1,352 @@
-from . import logclip
-import quadpy
-
+import os
 from dataclasses import dataclass, field
+import quadpy
+from cupyx.scipy.sparse import csr_matrix
+from cupyx.scipy.sparse.linalg import gmres
+import pyvista as pv
 
+import cupy as cp
 import numpy as np
 
 
-import cupy as cp
-
-from cupyx.scipy.sparse import csr_matrix
-from cupyx.scipy.sparse.linalg import gmres
-
-import pyvista as pv
-
-from scipy.constants import epsilon_0, mu_0, c
-
-from .tools import area, rwg_connectivity
-
-pv.global_theme.colorbar_orientation = "vertical"
-pv.global_theme.cmap = "jet"
-
-eta = cp.sqrt(mu_0 / epsilon_0)
+from . import (
+    mu_0,
+    epsilon_0,
+    c,
+    Plot,
+    get_field,
+    process_fields,
+    set_field,
+    add_field,
+)
+from .tools import Timer, remesh
 
 
 @dataclass
-class MoM(pv.PolyData):
+class Solver:
 
-    mesh: pv.UnstructuredGrid
-    k: float
+    ds: pv.DataSet
+    lam: float
 
     probes: list = field(default_factory=list)
 
-    chunks: int = 16
+    chunks: int = 32
+    tolerance: float = 1e-6
+
+    remesh: float = None
 
     def __post_init__(self):
 
-        # extract surface from unstructured grid
-        poly = self.mesh.extract_surface()
-        poly.triangulate(inplace=True)
-        poly.clean()
+        self.tri = self.ds.extract_surface()
+        self.tri.triangulate(inplace=True)
+        self.tri.clean(inplace=True, tolerance=self.tolerance)
 
-        # extract surface from unstructured grid
-        super().__init__(poly)
-
-        # define angular frequency
-        self.omega = self.k * c
-
-        # define connectivity
-        self.con = self.faces.reshape(-1, 4)[:, 1:]
-        self.con_m, self.isin = rwg_connectivity(self.con)
-
-        # number of edges
-        self.M = self.con_m.shape[-2]
-
-        # number of faces
-        self.N = self.con.shape[-2]
-
-        print(f"edges: {self.M}")
-        print(f"faces: {self.N}")
-
-        # face vertices (N x 3 x 3)
-        self.r = cp.asarray(self.points[self.con])
-
-        # rwg vertices (2 x M x 3 x 3)
-        self.rm = cp.asarray(self.points[self.con_m])
-
-        # rwg edge length
-        self.lm = cp.linalg.norm(self.rm[0, :, 0] - self.rm[0, :, 1], axis=-1)
-
-        # rwg centroids (2 x M x 3)
-        self.rmc = cp.mean(self.rm, axis=-2)
-
-        # rwg vertex fields (2 x 3 x M x 3)
-        self.Em = cp.asarray(self["Er"] + 1j * self["Ei"])[self.con_m]
-
-        # rwg centroid fields (2 x M x 3)
-        self.Emc = cp.mean(self.Em, axis=-2)
-
-        self.Am = area(
-            self.rm[:, :, 0] - self.rm[:, :, -1], self.rm[:, :, 1] - self.rm[:, :, -1]
-        )
-
-        # areas of faces (N)
-        self.dS = area(self.r[:, 1] - self.r[:, 0], self.r[:, 2] - self.r[:, 0])
-        # self.dS = self.compute_cell_sizes()["Area"]
-
-        # face centroids (N x 3)
-        self.rc = np.mean(self.r, axis=-2)
+        if self.remesh is not None:
+            self.tri = remesh(self.tri, self.remesh)
 
     def solve(self):
+        """Solve EFIE on PEC triangulation with method of moments."""
 
-        self.subdivide_by_quadrature()
+        k = 2 * np.pi / self.lam
+        omega = k * c
 
-        self.define_basis_functions()
+        with Timer("Build Face Connectivity"):
+            con = get_connectivity(self.tri)
 
-        self.build_matrices()
+        with Timer("Generate RWG connectivity"):
+            con_m, isin = rwg(con)
 
-        self.solve_currents()
+        with Timer("Subdivide faces by quadrature"):
+            rp, dSp = subdivide_faces_by_quadrature(self.tri, con)
 
-    def post(self):
+        with Timer("Compute RWG data"):
+            rm, lm, rmc, Am, Emc, rhomc = get_rwg_geometry(self.tri, con_m)
+
+        with Timer("Build RWG basis functions"):
+            fm, dfm = build_basis_functions(rp, rm, lm, Am, isin)
+
+        with Timer("Generate Green's Function"):
+            Gm = green_function(rmc, rp, k)
+
+        with Timer("Assemble scalar potential matrices"):
+            phi = assemble_scalar_potential(Gm * dSp, dfm, omega)
+
+        with Timer("Assemble vector potential matrices"):
+            Avec = assemble_vector_potential(Gm * dSp, fm)
+
+        with Timer("Build excitation vector"):
+            V = excitation_vector(lm, Emc, rhomc)
+
+        with Timer("Build impedance matrix"):
+            Z = impedance_matrix(lm, omega, Avec, rhomc, phi)
+
+        with Timer("solve currents GMRES"):
+            I = solve_currents(Z, V)
+
+        with Timer("solve sources by integrate currents"):
+            J = integrate_currents(I, fm, dSp)
+
+        with Timer("setting fields"):
+            set_field(self.tri, A=J.get(), key="J")
+            process_fields(self.tri, keys="J")
+            self.tri.set_active_scalars("||J||^2")
 
         for probe in self.probes:
-            self.radiate(probe, self.chunks)
+            radiate(k, self.tri, probe, self.chunks)
+            process_fields(probe, keys="E")
+            probe.set_active_scalars("||E||^2")
 
     def plot(self):
 
-        plotter = pv.Plotter()
-
-        for probe in self.probes:
-            if probe.dimensionality == 3:
-                distance = probe.length / np.linalg.norm(probe.dimensions)
-                plotter.add_volume(probe, opacity_unit_distance=distance)
-            else:
-                plotter.add_mesh(probe)
-
-        plotter.enable_parallel_projection()
-        plotter.show_grid()
+        plotter = Plot([self.tri, *self.probes])
 
         return plotter
 
-    def solve_currents(self):
+    def save(self, prefix):
+        with Timer("saving ..."):
 
-        print("gmres solve basis currents")
-        self._I, info = gmres(self._Z, self._V)
+            os.makedirs(os.path.dirname(prefix), exist_ok=True)
 
-        if info > 0:
-            RuntimeError("convergence to tolerance not achieved, number of iterations")
-        else:
-            print("converged !")
+            for i, obj in enumerate([self.ds, self.tri, *self.probes]):
+                obj.save(f"{prefix}.{i:03d}.vtk")
 
-        print("integrating surface currents ...")
-        J = np.sum(
-            self._I[:, None, None, None] * self._fm * self._dSp[..., None],
-            axis=(0, 1, -2),
-        ).get()
 
-        # Compute magnitude squared for plotting
-        print("saving current vectors")
-        self.cell_data["Jr"] = J.real
-        self.cell_data["Ji"] = J.imag
-        self.cell_data["|J|^2"] = np.linalg.norm(J, axis=-1) ** 2
+def rwg(con):
+    """generate RWG (Rao, Wilton, Glisson) connectivity from trimesh face connectivity"""
 
-    def build_matrices(self):
+    # construct edges from face connectivity (face x edge x point) (N, 3, 2)
+    edges = con[:, [[0, 1], [1, 2], [2, 0]]]
 
-        print("interaction displacement vector (2 x M x M)")
-        Rm = cp.linalg.norm(self.rmc[..., None, None, :] - self._rp, axis=-1)
+    # sort flattened edges by points (N x 3, 2)
+    sorted_edges = np.sort(edges.reshape(-1, 2))
 
-        print("Greens function (2 x M x N) ...")
-        G = cp.exp(-1j * self.k * Rm) / (4 * cp.pi * Rm)
-        G[~cp.isfinite(G)] = 0
+    # count edge uniqueness
+    unique_edges, counts = np.unique(sorted_edges, axis=0, return_counts=True)
 
-        # broadcast integration points
-        GmdSp, dFpn = cp.broadcast_arrays(G * self._dSp, self._dfm[..., None])
+    # define rwg basis of unique internal edges (M, 2)
+    internal_edges = unique_edges[counts == 2]
 
-        # reshape along integration points
-        GmdSp = GmdSp.reshape(*GmdSp.shape[:2], -1)
-        dFpn = dFpn.reshape(*dFpn.shape[:2], -1).transpose(0, 2, 1)
-        Fpn = self._fm.reshape(*self._fm.shape[:2], -1, 3).transpose(0, 2, 1, 3)
+    def get_free_vert(edge):
+        """find free vertex given edge (2,) in face edges (M, 3, 2)"""
 
-        print("centroid basis displacement rwg centroid to free vertex ...")
-        pm = cp.array([1, -1])[:, None, None]
-        self._rhomc = pm * (self.rmc - self.rm[:, :, -1])
+        # match edge to face
+        face = np.any(np.all(edge == edges, axis=-1), axis=-1)
 
-        print("computing electric potential ...")
-        self._phi = cp.empty((2, self.M, self.M), dtype=cp.complex128)
-        for i in range(2):
-            self._phi[i] = (
-                1j / (self.omega * epsilon_0) * GmdSp[i] @ csr_matrix(dFpn[i])
-            )
+        # get face to points
+        points = np.unique(edges[face])
 
-        print("computing magnetic vector potential ...")
-        self._Avec = cp.empty((2, self.M, self.M, 3), dtype=cp.complex128)
-        for i in range(2):
-            for j in range(3):
-                self._Avec[i, ..., j] = mu_0 * GmdSp[i] @ csr_matrix(Fpn[i, ..., j])
+        # find free vertex
+        vertex = np.setdiff1d(points, edge)
 
-        print("forming excitation vector ...")
-        self._V = self.lm * cp.sum(self.Emc * self._rhomc / 2, axis=(0, -1))
+        return int(vertex[0])
 
-        print("forming impedance matrix ...")
-        self._Z = self.lm * (
-            1j
-            * self.omega
-            * cp.sum(self._Avec * self._rhomc[..., None, :] / 2, axis=(0, -1))
-            - cp.diff(self._phi, axis=0)[0]
-        )
+    # find free rwg vertices
+    vert_pos = np.array([get_free_vert(edge) for edge in internal_edges])
+    vert_neg = np.array([get_free_vert(edge[::-1]) for edge in internal_edges])
 
-    def define_basis_functions(self):
+    c1p = np.stack([internal_edges[:, 0], internal_edges[:, 1], vert_pos], axis=-1)
+    c1n = np.stack([internal_edges[:, 1], internal_edges[:, 0], vert_neg], axis=-1)
 
-        print("compute integration point to free vertex displacement  (2 x M x N x 3)")
-        rho = self._rp - self.rm[..., -1, :][..., None, None, :]
+    # define rwg connectivity
+    con_m = np.stack([c1p, c1n])
 
-        # match con to rwg connectivity (2 x M x N)
-        pm = np.array([1, -1])[:, None, None]
-        ind = cp.asarray(pm * self.isin)
+    # define adjacency
+    isin = np.all(np.sort(con) == np.sort(con_m)[:, :, None], axis=-1)
+    r_in_T = np.array([1, -1])[:, None, None] * isin
 
-        # consider summing along +/- axis, since this isn't in the notation technicaly specified
-        print("computing rwg basis function")
-        self._fm = (ind * (self.lm / self.Am)[..., None])[..., None, None] * rho
+    return con_m, r_in_T
 
-        print("computing rwg basic function divergence (2 x M x N)")
-        self._dfm = ind * (self.lm / self.Am)[..., None]
 
-    def subdivide_by_quadrature(self):
-        print("define source points r' at by quadrature (N, n, 3)")
-        scheme = quadpy.t2.get_good_scheme(2)
-        self._rp = cp.sum(
-            self.r[..., None, :] * cp.asarray(scheme.points)[..., None], axis=1
-        )
-        self._dSp = self.dS[:, None] * cp.asarray(scheme.weights)
+def get_connectivity(tri):
+    """return triangulation connectivity"""
+    return tri.faces.reshape(-1, 4)[:, 1:]
 
-    def radiate(self, probe: pv.StructuredGrid, chunks: int = 1):
-        """radiate current sources to probe"""
 
-        r1 = cp.asarray(self.cell_centers().points)
-        dSp = cp.asarray(self.compute_cell_sizes()["Area"])[..., None]
+def subdivide_faces_by_quadrature(tri: pv.PolyData, con, deg: int = 3, show=False):
+    """subdivide triangulation for integration by quadrature"""
 
-        J = cp.asarray(self.cell_data["Jr"] + 1j * self.cell_data["Ji"])
+    r = tri.points[con]
+    dS = tri.compute_cell_sizes(length=False, volume=False)["Area"]
 
-        divJr = self.compute_derivative("Jr", divergence=True)["divergence"]
-        divJi = self.compute_derivative("Ji", divergence=True)["divergence"]
-        divJ = cp.asarray(divJr + 1j * divJi)[..., None]
+    scheme = quadpy.t2.get_good_scheme(deg)
+    rp = np.sum(r[..., None, :] * scheme.points[..., None], axis=1)
+    dSp = dS[:, None] * scheme.weights
 
-        def Es(r2):
-            """radiate r1 onto chunk of r2, re-derive using green't function with positive exponent"""
-            r = cp.asarray(r2)[..., None, :] - r1
-            R = cp.linalg.norm(r, axis=-1, keepdims=True)
-            G = cp.exp(-1j * self.k * R) / (4 * cp.pi * R)
+    if show:
+        rc = tri.cell_centers()
+        plotter = pv.Plotter()
+        plotter.add_mesh(tri, style="wireframe")
+        plotter.add_points(rp.reshape(-1, 3))
+        plotter.add_points(rc, color="r", style="points_gaussian", point_size=0.5)
+        plotter.show()
 
-            dG = r * (G / R**2 + 1j * self.k * G / R)
+    return cp.array(rp), cp.array(dSp)
 
-            A = mu_0 * cp.sum(J * G * dSp, axis=-2)
-            grad_phi = cp.sum(1j * divJ / self.omega * dG * dSp, axis=-2)
 
-            return (-1j * self.omega * A - grad_phi).get()
+def get_rwg_geometry(tri, con_m):
+    """Return RWG geometry"""
 
-        print("radiating EFIE ...")
-        E = np.concat([Es(r2) for r2 in np.array_split(probe.points, chunks)])
+    # re-order for convenience ((v1p, v1n), (v2p, v2n), (vp, vn))
+    con_m = con_m.transpose(2, 0, 1)
 
-        probe.point_data["Er"] = E.real
-        probe.point_data["Ei"] = E.imag
-        E2 = np.linalg.norm(E, axis=-1) ** 2
-        E2, E2dB = logclip(E2)
-        probe.point_data["|E|^2"] = E2
-        probe.point_data["|E|^2 (dB)"] = E2dB
+    # RWG points vertices
+    rm = cp.asarray(tri.points[con_m])
+
+    # RWG shared edge length
+    lm = cp.linalg.norm(rm[0] - rm[1], axis=-1)[0]
+
+    # RWG centroids
+    rmc = cp.mean(rm, axis=0)
+
+    # RWG areas
+    u = rm[0] - rm[-1]
+    v = rm[1] - rm[-1]
+    Am = 0.5 * cp.linalg.norm(cp.cross(u, v, axis=-1), axis=-1)
+
+    # RWG fields (at vertices, centroids)
+    Em = cp.asarray(get_field(tri, "E")[con_m])
+    # Em = cp.asarray(get_field(tri, "E")[con_m])
+    Emc = cp.mean(Em, axis=0)
+
+    # RWG centroid to vertex
+    rhomc = cp.stack([rmc[0] - rm[-1, 0], rm[-1, 1] - rmc[1]])
+
+    return rm, lm, rmc, Am, Emc, rhomc
+
+
+def build_basis_functions(rp, rm, lm, Am, r_in_T):
+    """RWG basis function and its divergence"""
+
+    # displacement from integration point to free-vertex
+    rho = rp - rm[-1][..., None, None, :]
+
+    # basis function divergence
+    dfm = cp.array(r_in_T) * (lm / Am)[..., None]
+
+    # basis function
+    fm = 0.5 * dfm[..., None, None] * rho
+
+    return fm, dfm
+
+
+def green_function(rmc, rp, k):
+    """Return Green's function at quadrature points"""
+    Rm = cp.linalg.norm(cp.asarray(rmc[..., None, None, :]) - cp.asarray(rp), axis=-1)
+    Gm = cp.exp(-1j * k * Rm) / Rm
+    # G[~cp.isfinite(G)] = 0
+    return Gm
+
+
+def assemble_scalar_potential(GmdS, dfm, omega):
+    """Rao 1982 eq. 20"""
+
+    _, M, N, n = GmdS.shape
+
+    GdSm, dfm = cp.broadcast_arrays(GmdS, dfm[..., None])
+
+    GdSmp = GdSm.reshape(2, M, -1)
+    dfpn = dfm.reshape(2, M, -1).transpose(0, 2, 1)
+
+    phi = cp.empty((2, M, M), dtype=cp.complex128)
+    for i in range(2):
+        phi[i] = GdSmp[i] @ csr_matrix(dfpn[i])
+
+    # eq. 20
+    return -1 / (4 * np.pi * 1j * omega * epsilon_0) * phi
+
+
+def assemble_vector_potential(GmdS, fm):
+    """Rao 1982 eq. 19"""
+
+    _, M, N, n = GmdS.shape
+
+    GdSmp = GmdS.reshape(2, M, -1)
+    fpn = fm.reshape(2, M, -1, 3).transpose(0, 2, 1, 3)
+
+    A = cp.empty((2, M, M, 3), dtype=cp.complex128)
+    for i in range(2):
+        for j in range(3):
+            A[i, ..., j] = GdSmp[i] @ csr_matrix(fpn[i, ..., j])
+
+    return mu_0 / (4 * np.pi) * A
+
+
+def excitation_vector(lm, Emc, rhomc):
+    """Rao 1982 eq. 18"""
+    return lm * np.sum(Emc * rhomc / 2, axis=(0, -1))
+
+
+def impedance_matrix(lm, omega, Avec, rhomc, phi):
+
+    Z = lm * (
+        1j * omega * cp.sum(Avec * rhomc[..., None, :] / 2, axis=(0, -1))
+        + phi[0]
+        - phi[1]
+    )
+
+    return Z
+
+
+def solve_currents(Z, V):
+    I, info = gmres(Z, V)
+    if info > 0:
+        raise RuntimeError("GMRES did not converge")
+    return I
+
+
+def integrate_currents(I, fm, dSp):
+    """Rao 1982 eq. 9"""
+    return cp.sum(I[:, None, None, None] * fm * dSp[..., None], axis=(0, 1, -2))
+
+
+def radiate(k1: float, ds1: pv.DataSet, ds2: pv.DataSet, chunks: int = 8):
+    """radiate current sources to probe"""
+
+    r1 = ds1.cell_centers().points
+    dS1 = ds1.compute_cell_sizes()["Area"]
+
+    J = get_field(ds1, "J")
+
+    divJr = ds1.compute_derivative("Jr", divergence=True)["divergence"]
+    divJi = ds1.compute_derivative("Ji", divergence=True)["divergence"]
+    divJ = divJr + 1j * divJi
+
+    r2 = ds2.points
+
+    # print()
+    with Timer(f"radiating EFIE int {chunks} chunks..."):
+        E = np.empty_like(r2, dtype=complex)
+        for ind in np.array_split(np.arange(r2.shape[0]), chunks):
+            E[ind] = efie(k1, r1, dS1, J, divJ, r2[ind])
+
+    add_field(ds2, E, "E")
+
+
+def efie(k1, r1, dS1, J1, divJ1, r2):
+    """radiate r1 onto chunk of r2, re-derive using green't function with positive exponent"""
+
+    omega = k1 * c
+
+    r = cp.asarray(r2)[..., None, :] - cp.asarray(r1)
+    R = cp.linalg.norm(r, axis=-1, keepdims=True)
+    G = cp.exp(-1j * k1 * R) / R
+
+    dGp = G * (1 + 1j * k1 * R) * r / R**2
+
+    dS1 = cp.asarray(dS1)[..., None]
+    J1 = cp.asarray(J1)
+    divJ1 = cp.asarray(divJ1)[..., None]
+
+    # eq. 4
+    sigma = -divJ1 / (1j * omega)
+
+    # eq. 3
+    grad_phi = 1 / (4 * np.pi * epsilon_0) * cp.sum(sigma * dGp * dS1, axis=-2)
+
+    # eq. 2
+    A = mu_0 / (4 * np.pi) * cp.sum(J1 * G * dS1, axis=-2)
+
+    # eq. 1
+    Es = -1j * omega * A - grad_phi
+
+    return Es.get()
