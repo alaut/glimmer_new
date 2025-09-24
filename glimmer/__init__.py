@@ -51,23 +51,18 @@ def add_fields(ds: pv.DataSet, E=None, H=None, J=None):
 def process_fields(ds: pv.DataSet, keys=["E", "H"], clip=99, dBmin=-30):
     """process complex vector fields as scalar field amplitude"""
 
-    data = {}
-
     for key in keys:
         A = get_field(ds, key)
 
         I = np.linalg.norm(A, axis=-1) ** 2
         I = np.clip(I, max=np.nanpercentile(I, clip))
 
-        data[f"||{key}||^2"] = I
+        ds[f"||{key}||^2"] = I
 
         with np.errstate(divide="ignore", invalid="ignore"):
             IdB = np.clip(10 * np.log10(I / I.max()), dBmin, 0)
 
-            data[f"||{key}||^2 (dB)"] = IdB
-
-    for k, v in data.items():
-        ds[k] = v
+            ds[f"||{key}||^2 (dB)"] = IdB
 
 
 def Gaussian(w0, lam, num_lam=3, num_waist=3, P0=1):
