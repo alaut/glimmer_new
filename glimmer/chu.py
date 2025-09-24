@@ -130,22 +130,13 @@ class Solver:
                 obj.set_active_scalars("||E||^2")
 
     def save(self, prefix):
-        """save pyvista objects to vtk format"""
 
-        with Timer("saving ..."):
+        with Timer("Saving"):
 
             os.makedirs(os.path.dirname(prefix), exist_ok=True)
 
-            mb = pv.MultiBlock([self.source, *self.optics, *self.probes])
+            mb = pv.MultiBlock([*self.probes, *self.optics, self.source])
             mb.save(f"{prefix}.vtm")
-
-            self.source.save(f"{prefix}.source.vtk")
-
-            for i, optic in enumerate(self.optics):
-                optic.save(f"{prefix}.optic.{i}.vtk")
-
-            for i, probe in enumerate(self.probes):
-                probe.save(f"{prefix}.probe.{i}.vtk")
 
     def plot(self):
 
