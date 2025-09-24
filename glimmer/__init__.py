@@ -2,12 +2,13 @@ import numpy as np
 
 import pyvista as pv
 
-from .tools import Timer
 
 from scipy.constants import mu_0, epsilon_0, c
 
 
 eta = np.sqrt(mu_0 / epsilon_0)
+
+from .tools import Timer
 
 
 def set_field(ds, A, key, dtype=np.float32):
