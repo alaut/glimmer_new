@@ -1,13 +1,10 @@
 from scipy.constants import milli, degree
 import numpy as np
 
-from glimmer.sources import TransverseElectric
-
+from glimmer import add_field, process_fields
 from glimmer.mom import Solver
-from glimmer import add_field, process_fields, Grid
-
 from glimmer.launcher import Launcher
-
+from glimmer.sources import TransverseElectric, Grid
 
 milli = 1
 
