@@ -81,8 +81,12 @@ class Solver:
 
         with Timer("Setting surface currents"):
             set_field(self.tri, A=J.get(), key="J")
+
             process_fields(self.tri, keys="J")
             self.tri.set_active_scalars("||J||^2")
+
+            self.tri = self.tri.compute_derivative("Jr", divergence="divJr")
+            self.tri = self.tri.compute_derivative("Ji", divergence="divJi")
 
         for probe in self.probes:
             radiate(k, self.tri, probe, self.chunks)
@@ -302,10 +306,7 @@ def radiate(k1: float, ds1: pv.DataSet, ds2: pv.DataSet, chunks: int = 8):
     dS1 = ds1.compute_cell_sizes()["Area"]
 
     J = get_field(ds1, "J")
-
-    divJr = ds1.compute_derivative("Jr", divergence=True)["divergence"]
-    divJi = ds1.compute_derivative("Ji", divergence=True)["divergence"]
-    divJ = divJr + 1j * divJi
+    divJ = get_field(ds1, "divJ")
 
     r2 = ds2.points
 
