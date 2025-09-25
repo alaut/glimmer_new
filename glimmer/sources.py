@@ -1,20 +1,12 @@
-from scipy.special import factorial
 import pyvista as pv
 import numpy as np
-from dataclasses import dataclass
+
 from scipy.constants import mu_0, epsilon_0
-from scipy.special import jnp_zeros, jv, jvp
+from scipy.special import jnp_zeros, jv, jvp, factorial
+
+from glimmer import Grid, add_fields, set_field
 
 eta = np.sqrt(mu_0 / epsilon_0)
-
-# try:
-#     # from . import set_field, Grid, add_fields
-from . import *
-from .tools import integrate_power
-
-# except:
-#     from glimmer import *
-#     from glimmer.tools import integrate_power
 
 
 def GaussianBeam(w0, lam, num_lam=3, num_waist=3, P0=1):
@@ -187,18 +179,3 @@ def hermite(m, x):
 #         y[ind] = n[ind] * factorial(n[ind] - 1)
 
 #     return y
-
-
-if __name__ == "__main__":
-    sources = [
-        HermiteGaussian(m=3, n=2),
-        TransverseElectric(lam=300 / 110, m=22, n=6, omf=1.06, rmin=8),
-        TransverseElectric(lam=300 / 95, m=6, n=2, omf=1.06, rmin=2),
-        GaussianBeam(lam=300 / 95, w0=10),
-    ]
-
-    for obj in sources:
-
-        integrate_power(obj)
-        process_fields(obj)
-        obj.plot(scalars="||E||^2", cmap="jet")
