@@ -1,12 +1,16 @@
-from glimmer.templates.gt import src, yz, vol, m1, m2
-from glimmer.mom import MoM
+from glimmer.templates import gaussian_telescope as gt
+from glimmer.mom import Solver
+from glimmer.tools import integrate_power
+ 
+
+solver = Solver(ds=gt.pec, lam=gt.lam, probes=gt.probes)
+
+# solver.plot().show()
+solver.solve()
 
 
-mom = MoM(src + m1 + m2, k=src.k, probes=[src, m1, m2, vol, yz])
+for obj in solver.probes:
+    integrate_power(obj)
 
-mom.solve()
-mom.post()
-
-plotter = mom.plot()
-# plotter.camera_position = "xz"
-plotter.show()
+solver.save("./temp/gt/mom")
+solver.plot().show()

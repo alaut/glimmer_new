@@ -7,6 +7,8 @@ import pyvista as pv
 
 import cupy as cp
 
+from . import eta
+
 
 def poly2grid(
     ds: pv.DataSet,
@@ -39,52 +41,6 @@ def poly2grid(
 def area(u, v):
     """compute area of triangle defined by vectors u and v"""
     return 0.5 * cp.linalg.norm(cp.cross(u, v, axis=-1), axis=-1)
-
-
-# def rwg_connectivity(con):
-#     """generate RWG (Rao, Wilton, Glisson) connectivity from trimesh face connectivity"""
-
-#     # construct edges from face connectivity (face x edge x point) (N, 3, 2)
-#     edges = con[:, [[0, 1], [1, 2], [2, 0]]]
-
-#     # sort flattened edges by points (N x 3, 2)
-#     sorted_edges = np.sort(edges.reshape(-1, 2))
-
-#     # count edge uniqueness
-#     unique_edges, counts = np.unique(sorted_edges, axis=0, return_counts=True)
-
-#     # define rwg basis of unique internal edges (M, 2)
-#     internal_edges = unique_edges[counts == 2]
-
-#     def get_free_vert(edge):
-#         """find free vertex given edge (2,) in face edges (M, 3, 2)"""
-
-#         # match edge to face
-#         face = np.any(np.all(edge == edges, axis=-1), axis=-1)
-
-#         # get face to points
-#         points = np.unique(edges[face])
-
-#         # find free vertex
-#         vertex = np.setdiff1d(points, edge)
-
-#         return int(vertex[0])
-
-#     # find free rwg vertices
-#     vert_pos = np.array([get_free_vert(edge) for edge in internal_edges])
-#     vert_neg = np.array([get_free_vert(edge[::-1]) for edge in internal_edges])
-
-#     cp = np.stack([internal_edges[:, 0], internal_edges[:, 1], vert_pos], axis=-1)
-#     cn = np.stack([internal_edges[:, 1], internal_edges[:, 0], vert_neg], axis=-1)
-
-#     # define rwg connectivity
-#     con_m = np.stack([cp, cn])
-
-#     # define adjacency
-#     isin = np.all(np.sort(con) == np.sort(con_m)[:, :, None], axis=-1)
-
-#     return con_m, isin
-#
 
 
 def remesh(poly: pv.PolyData, dl=None, subdivisions=None, target_vertices=None):
@@ -120,11 +76,11 @@ def remesh(poly: pv.PolyData, dl=None, subdivisions=None, target_vertices=None):
 @dataclass
 class Timer:
 
-    text: str = "Elapsed"
+    text: str = "Working"
 
     def __enter__(self):
         self.start = time.time()
-        print(self.text, end=" ")
+        print(self.text, end="\t")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -132,50 +88,29 @@ class Timer:
         print(f"[{elapsed:.1f} s]")
 
 
-def integrate_power(ds: pv.DataSet):
+def integrate_power(ds: pv.DataSet, scale=1):
+    """integrate E/H field along pyvista DataSet"""
 
     grid = ds.extract_surface()
-
     grid = grid.compute_cell_sizes()
     grid = grid.compute_normals()
     grid = grid.cell_data_to_point_data()
 
-    dS = grid["Area"]
+    dA = grid["Area"]
     n = grid["Normals"]
-
     E = grid["Er"] + 1j * grid["Ei"]
-    H = grid["Hr"] + 1j * grid["Hi"]
 
-    Sm = np.cross(E, np.conj(H), axis=-1)
+    try:
+        H = grid["Hr"] + 1j * grid["Hi"]
 
-    Savg = np.real(Sm)
+        S = np.real(np.cross(E, np.conj(H)))
+        pwr = np.sum(S * dA[..., None] * n) * scale
+        print(f"power (E/H): {pwr:0.3f}")
+    except:
 
-    pwr = np.sum(Savg * dS[..., None] * n)
-    print(f"{pwr:0.3f}")
+        S = np.linalg.norm(E, axis=-1) ** 2 / eta
+        pwr = np.sum(S * dA) * scale
+
+        print(f"power (E): {pwr:0.3f}")
 
     return pwr
-
-
-# def integrate_power(ds: pv.DataSet):
-#     grid = ds.extract_surface()
-#     grid = grid.compute_normals(inplace=True)  # Point-based normals
-#     grid = grid.compute_cell_sizes(
-#         length=False, area=True, volume=False
-#     )  # Point-based areas
-
-#     # Convert everything to cell_data
-#     grid = grid.point_data_to_cell_data()
-
-#     dS = grid.cell_data["Area"]  # Now cell-based
-#     n_cell = grid.cell_data["Normals"] / np.linalg.norm(
-#         grid.cell_data["Normals"], axis=-1, keepdims=True
-#     )  # Unit cell normals
-#     E = grid.cell_data["Er"] + 1j * grid.cell_data["Ei"]
-#     H = grid.cell_data["Hr"] + 1j * grid.cell_data["Hi"]
-
-#     Sm = np.cross(E, np.conj(H)) / 2  # Time-averaged
-#     Savg = np.real(Sm)
-
-#     pwr = np.sum(Savg * n_cell * dS[:, None])  # Proper flux
-#     print(pwr)
-#     return pwr

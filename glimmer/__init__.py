@@ -63,29 +63,6 @@ def process_fields(ds: pv.DataSet, keys=["E", "H"], clip=99, dBmin=-30):
         ds[f"||{key}||^2 (dB)"] = IdB
 
 
-def Gaussian(w0, lam, num_lam=3, num_waist=3, P0=1):
-    """generate gaussian source object"""
-
-    w0 = np.array([1, 1]) * np.array(w0)
-    Lx, Ly = w0 * num_waist
-
-    grid = Grid(xlim=(-Lx / 2, Lx / 2), ylim=(-Ly / 2, Ly / 2), d=lam / num_lam)
-
-    X = grid.points[..., 0] / w0[0]
-    Y = grid.points[..., 1] / w0[1]
-
-    I0 = 2 * P0 / (np.pi * w0[0] * w0[1])
-    A = np.sqrt(I0 * eta) * np.exp(-(X**2)) * np.exp(-(Y**2))
-
-    add_fields(
-        grid,
-        E=A[..., None] * np.array([1, 0, 0]),
-        H=A[..., None] * np.array([0, 1, 0]) / eta,
-    )
-
-    return grid
-
-
 def Mirror(L, dL, f=None, dz=0):
     """generate rectilinear mirror with parabolic deformation"""
 

@@ -28,6 +28,8 @@ class Solver:
     tolerance: float = None
     remesh: float = None
 
+    mode: str = "cupy"
+
     def __post_init__(self):
 
         self.tri = self.ds.extract_surface()
@@ -44,6 +46,8 @@ class Solver:
 
         k = 2 * np.pi / self.lam
         omega = k * c
+
+        print(f"Array Mode [{self.mode}]")
 
         with Timer("Building Face Connectivity"):
             con = get_connectivity(self.tri)
@@ -64,10 +68,10 @@ class Solver:
             Gm = green_function(rmc, rp, k)
 
         with Timer("Assembling scalar potentials"):
-            phi = assemble_scalar_potential(Gm * dSp, 0 * dfm, omega)
+            phi = assemble_scalar_potential(Gm * dSp, 0 * dfm, omega, self.mode)
 
         with Timer("Assembling vector potentials"):
-            Avec = assemble_vector_potential(Gm * dSp, fm)
+            Avec = assemble_vector_potential(Gm * dSp, fm, self.mode)
 
         with Timer("Building excitation vector"):
             V = excitation_vector(lm, Emc, rhomc)
@@ -243,26 +247,25 @@ def assemble_scalar_potential(GmdS, dfm, omega, mode="cupy"):
 
     match mode:
         case "cupy":
+            phi = cp.einsum("impq,inp->imn", GmdS, dfm)
+        case "cupy-sparse":
             _, M, N, n = GmdS.shape
-
             GdSm, dfm = cp.broadcast_arrays(GmdS, dfm[..., None])
-
             GdSmp = GdSm.reshape(2, M, -1)
             dfpn = dfm.reshape(2, M, -1).transpose(0, 2, 1)
-
             phi = cp.empty((2, M, M), dtype=cp.complex128)
             for i in range(2):
                 phi[i] = GdSmp[i] @ csr_matrix(dfpn[i])
+        case "numpy":
+            phi = np.einsum("impq,inp->imn", GmdS.get(), dfm.get())
         case "tensorflow":
             GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
             dfm = tf.convert_to_tensor(dfm.get(), dtype=tf.complex64)
             phi = cp.array(tf.einsum("impq,inp->imn", GmdS, dfm).numpy())
-        case "numpy":
-            phi = np.einsum("impq,inp->imn", GmdS.get(), dfm.get())
+
         case "pytorch":
             GmdS = torch.from_numpy(GmdS.get()).to(dtype=torch.complex64)
             dfm = torch.from_numpy(dfm.get()).to(dtype=torch.complex64)
-
             phi = torch.einsum("impq,inp->imn", GmdS, dfm)
             phi = cp.array(phi.numpy())
 
@@ -274,6 +277,8 @@ def assemble_vector_potential(GmdS, fm, mode="cupy"):
 
     match mode:
         case "cupy":
+            A = cp.einsum("impq,inpqj->imnj", GmdS, fm)
+        case "cupy-sparse":
             _, M, N, n = GmdS.shape
 
             GdSmp = GmdS.reshape(2, M, -1)
@@ -283,19 +288,15 @@ def assemble_vector_potential(GmdS, fm, mode="cupy"):
             for i in range(2):
                 for j in range(3):
                     A[i, ..., j] = GdSmp[i] @ csr_matrix(fpn[i, ..., j])
-        case "cupy-einsum":
-            A = cp.einsum("impq,inpqj->imnj", GmdS, fm)
         case "numpy":
             A = cp.array(cp.einsum("impq,inpqj->imnj", GmdS.get(), fm.get()))
         case "tensorflow":
             GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
             fm = tf.convert_to_tensor(fm.get(), dtype=tf.complex64)
-
             A = cp.array(tf.einsum("impq,inpqj->imnj", GmdS, fm).numpy())
         case "pytorch":
             GmdS = torch.from_numpy(GmdS.get()).to(dtype=torch.complex64)
             fm = torch.from_numpy(fm.get()).to(dtype=torch.complex64)
-
             A = torch.einsum("impq,inpqj->imnj", GmdS, fm)
             A = cp.array(A.numpy())
 
