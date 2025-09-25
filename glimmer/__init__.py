@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+import time
 import numpy as np
 
 import pyvista as pv
@@ -7,8 +9,6 @@ from scipy.constants import mu_0, epsilon_0, c
 
 
 eta = np.sqrt(mu_0 / epsilon_0)
-
-from .tools import Timer
 
 
 def set_field(ds, A, key, dtype=np.float32):
@@ -141,3 +141,18 @@ def Plot(objects, plotter=None, cmap="jet"):
     plotter.show_grid()
 
     return plotter
+
+
+@dataclass
+class Timer:
+
+    text: str = "Working"
+
+    def __enter__(self):
+        self.start = time.time()
+        print(self.text, end="\t")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed = time.time() - self.start
+        print(f"[{elapsed:.1f} s]")

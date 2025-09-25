@@ -37,7 +37,7 @@ m1 = m.rotate_x(45)
 m1.translate([0, 0, s], inplace=True)
 
 
-m2 = m.rotate_x(-77)
+m2 = m.rotate_x(-45)
 m2.translate([0, 2 * s, s], inplace=True)
 
 add_field(m1, key="E")
@@ -63,7 +63,7 @@ xy1 = xy.translate([0, 0, 5 * milli])
 xy2 = xy.translate([0, 2 * s, 5 * milli])
 
 probes = [
-    # vol,
+    vol,
     yz,
     xy1,
     xz,

@@ -12,7 +12,7 @@ import numpy as np
 
 from . import *
 
-from .tools import Timer, remesh
+from .tools import remesh
 
 
 @dataclass

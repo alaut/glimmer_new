@@ -1,3 +1,6 @@
+from . import process_fields
+from skimage.restoration import unwrap_phase
+
 from pyacvd import Clustering
 from dataclasses import dataclass
 import time
@@ -7,7 +10,7 @@ import pyvista as pv
 
 import cupy as cp
 
-from . import eta
+from . import eta, get_field
 
 
 def poly2grid(
@@ -73,21 +76,6 @@ def remesh(poly: pv.PolyData, dl=None, subdivisions=None, target_vertices=None):
     return remeshed
 
 
-@dataclass
-class Timer:
-
-    text: str = "Working"
-
-    def __enter__(self):
-        self.start = time.time()
-        print(self.text, end="\t")
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        elapsed = time.time() - self.start
-        print(f"[{elapsed:.1f} s]")
-
-
 def integrate_power(ds: pv.DataSet, scale=1):
     """integrate E/H field along pyvista DataSet"""
 
@@ -114,3 +102,28 @@ def integrate_power(ds: pv.DataSet, scale=1):
         print(f"power (E): {pwr:0.3f}")
 
     return pwr
+
+
+def get_phase(ds: pv.StructuredGrid, keys="E", ref=None):
+    """extract phase information from complex vector fields"""
+
+    assert isinstance(ds, pv.StructuredGrid), "DataSet is not a pyvista.StructuredGrid"
+
+    if ref is None:
+        ref = tuple(dim // 2 for dim in ds.dimensions)
+
+    process_fields(ds, keys=keys)
+
+    for key in keys:
+
+        A = get_field(ds, key)
+
+        for i, k in enumerate("xyz"):
+
+            phase = np.angle(A[..., i]).reshape(ds.dimensions, order="F")
+
+            phase_unwrapped = unwrap_phase(phase)
+            phase_unwrapped = phase_unwrapped - phase_unwrapped[ref]
+
+            ds[f"phase({key}{k})"] = phase.reshape(-1, order="F")
+            ds[f"phase({key}{k}) (unwrapped)"] = phase_unwrapped.reshape(-1, order="F")

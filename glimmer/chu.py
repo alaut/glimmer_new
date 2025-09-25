@@ -4,7 +4,7 @@ import cupy as cp
 import pyvista as pv
 import numpy as np
 
-from .tools import Timer
+from . import Timer
 from . import add_fields, eta, Plot, process_fields
 
 
