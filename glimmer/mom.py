@@ -1,3 +1,5 @@
+import torch
+import tensorflow as tf
 import os
 from dataclasses import dataclass, field
 import quadpy
@@ -62,7 +64,7 @@ class Solver:
             Gm = green_function(rmc, rp, k)
 
         with Timer("Assembling scalar potentials"):
-            phi = assemble_scalar_potential(Gm * dSp, dfm, omega)
+            phi = assemble_scalar_potential(Gm * dSp, 0 * dfm, omega)
 
         with Timer("Assembling vector potentials"):
             Avec = assemble_vector_potential(Gm * dSp, fm)
@@ -161,8 +163,8 @@ def get_connectivity(tri):
     return tri.faces.reshape(-1, 4)[:, 1:]
 
 
-def subdivide_faces_by_quadrature(tri: pv.PolyData, con, deg: int = 3, show=False):
-    """subdivide triangulation for integration by quadrature"""
+def subdivide_faces_by_quadrature(tri: pv.PolyData, con, deg: int = 2, show=False):
+    """subdivide triangulation for integration by quadrature (assert deg = 2, 3, 4, 6, 7, 12)"""
 
     r = tri.points[con]
     dS = tri.compute_cell_sizes(length=False, volume=False)["Area"]
@@ -232,41 +234,72 @@ def build_basis_functions(rp, rm, lm, Am, r_in_T):
 def green_function(rmc, rp, k):
     """Return Green's function at quadrature points"""
     Rm = cp.linalg.norm(cp.asarray(rmc[..., None, None, :]) - cp.asarray(rp), axis=-1)
-    Gm = cp.exp(-1j * k * Rm) / Rm
+    Gm = cp.exp(-1j * k * Rm) / (4 * np.pi * Rm)
     return Gm
 
 
-def assemble_scalar_potential(GmdS, dfm, omega):
+def assemble_scalar_potential(GmdS, dfm, omega, mode="cupy"):
     """Rao 1982 eq. 20"""
 
-    _, M, N, n = GmdS.shape
+    match mode:
+        case "cupy":
+            _, M, N, n = GmdS.shape
 
-    GdSm, dfm = cp.broadcast_arrays(GmdS, dfm[..., None])
+            GdSm, dfm = cp.broadcast_arrays(GmdS, dfm[..., None])
 
-    GdSmp = GdSm.reshape(2, M, -1)
-    dfpn = dfm.reshape(2, M, -1).transpose(0, 2, 1)
+            GdSmp = GdSm.reshape(2, M, -1)
+            dfpn = dfm.reshape(2, M, -1).transpose(0, 2, 1)
 
-    phi = cp.empty((2, M, M), dtype=cp.complex128)
-    for i in range(2):
-        phi[i] = GdSmp[i] @ csr_matrix(dfpn[i])
+            phi = cp.empty((2, M, M), dtype=cp.complex128)
+            for i in range(2):
+                phi[i] = GdSmp[i] @ csr_matrix(dfpn[i])
+        case "tensorflow":
+            GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
+            dfm = tf.convert_to_tensor(dfm.get(), dtype=tf.complex64)
+            phi = cp.array(tf.einsum("impq,inp->imn", GmdS, dfm).numpy())
+        case "numpy":
+            phi = np.einsum("impq,inp->imn", GmdS.get(), dfm.get())
+        case "pytorch":
+            GmdS = torch.from_numpy(GmdS.get()).to(dtype=torch.complex64)
+            dfm = torch.from_numpy(dfm.get()).to(dtype=torch.complex64)
 
-    return -1 / (4 * np.pi * 1j * omega * epsilon_0) * phi
+            phi = torch.einsum("impq,inp->imn", GmdS, dfm)
+            phi = cp.array(phi.numpy())
+
+    return 1j / (omega * epsilon_0) * phi
 
 
-def assemble_vector_potential(GmdS, fm):
+def assemble_vector_potential(GmdS, fm, mode="cupy"):
     """Rao 1982 eq. 19"""
 
-    _, M, N, n = GmdS.shape
+    match mode:
+        case "cupy":
+            _, M, N, n = GmdS.shape
 
-    GdSmp = GmdS.reshape(2, M, -1)
-    fpn = fm.reshape(2, M, -1, 3).transpose(0, 2, 1, 3)
+            GdSmp = GmdS.reshape(2, M, -1)
+            fpn = fm.reshape(2, M, -1, 3).transpose(0, 2, 1, 3)
 
-    A = cp.empty((2, M, M, 3), dtype=cp.complex128)
-    for i in range(2):
-        for j in range(3):
-            A[i, ..., j] = GdSmp[i] @ csr_matrix(fpn[i, ..., j])
+            A = cp.empty((2, M, M, 3), dtype=cp.complex128)
+            for i in range(2):
+                for j in range(3):
+                    A[i, ..., j] = GdSmp[i] @ csr_matrix(fpn[i, ..., j])
+        case "cupy-einsum":
+            A = cp.einsum("impq,inpqj->imnj", GmdS, fm)
+        case "numpy":
+            A = cp.array(cp.einsum("impq,inpqj->imnj", GmdS.get(), fm.get()))
+        case "tensorflow":
+            GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
+            fm = tf.convert_to_tensor(fm.get(), dtype=tf.complex64)
 
-    return mu_0 / (4 * np.pi) * A
+            A = cp.array(tf.einsum("impq,inpqj->imnj", GmdS, fm).numpy())
+        case "pytorch":
+            GmdS = torch.from_numpy(GmdS.get()).to(dtype=torch.complex64)
+            fm = torch.from_numpy(fm.get()).to(dtype=torch.complex64)
+
+            A = torch.einsum("impq,inpqj->imnj", GmdS, fm)
+            A = cp.array(A.numpy())
+
+    return mu_0 * A
 
 
 def excitation_vector(lm, Emc, rhomc):
@@ -325,7 +358,7 @@ def efie(k1, r1, dS1, J1, divJ1, r2):
 
     r = cp.asarray(r2)[..., None, :] - cp.asarray(r1)
     R = cp.linalg.norm(r, axis=-1, keepdims=True)
-    G = cp.exp(-1j * k1 * R) / R
+    G = cp.exp(-1j * k1 * R) / (4 * cp.pi * R)
 
     dGp = G * (1 + 1j * k1 * R) * r / R**2
 
@@ -334,13 +367,13 @@ def efie(k1, r1, dS1, J1, divJ1, r2):
     divJ1 = cp.asarray(divJ1)[..., None]
 
     # eq. 4
-    sigma = -divJ1 / (1j * omega)
+    sigma = 1j * divJ1 / omega
 
     # eq. 3
-    grad_phi = 1 / (4 * np.pi * epsilon_0) * cp.sum(sigma * dGp * dS1, axis=-2)
+    grad_phi = cp.sum(sigma * dGp * dS1, axis=-2) / epsilon_0
 
     # eq. 2
-    A = mu_0 / (4 * np.pi) * cp.sum(J1 * G * dS1, axis=-2)
+    A = mu_0 * cp.sum(J1 * G * dS1, axis=-2)
 
     # eq. 1
     Es = -1j * omega * A - grad_phi
