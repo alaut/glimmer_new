@@ -42,19 +42,23 @@ $$\omega\epsilon = \frac{k}{\eta} \quad \omega \mu = \eta k$$
 
 we yield the following simplified EFIE equation
 
-$$\boxed{n \times E = n \times i k \eta \oint (JG + \frac{1}{k^2}\nabla'\cdot J \nabla G)dS'}$$
+$$\boxed{n \times E = n \times i k \eta \oint (JG + \frac{1}{k^2}(\nabla'\cdot J) \nabla G)dS'}$$
 
 Presume we are dealing with arbitrary surfaces modeled by triangular patches
 
-![Arbitrary surface modeled by triangular patches](./figs/trimesh.png)
+<!-- ![Arbitrary surface modeled by triangular patches](./figs/trimesh.png) -->
 
 we can then develop a basis function associated to each interior edge that vanishes everwhere on S except within the two triangles attached to that edge
 
-![Triangle pair and geometrical parameters associated with interior edge](./figs/rwg.png)
+<!-- ![Triangle pair and geometrical parameters associated with interior edge](./figs/rwg.png) -->
+
+Let
+
+$$\rho_n^\pm = r - r_n^\pm$$
 
 The vector basis is defined as
 
-$$f_n^\pm(r) =  \pm \frac{l_n}{2A_n^\pm}(r-r^\pm) \mid r \in T_n^\pm $$
+$$f_n^\pm(r) =  \pm \frac{l_n}{2A_n^\pm}\rho_n^\pm \mid r \in T_n^\pm $$
 
 The surface divergence is given by
 
@@ -82,6 +86,39 @@ $$A = \mu \oint f_n(r')G(R_m^\pm)dS'$$
 $$\phi = \frac{j}{\omega\epsilon}\oint\nabla'\cdot f_n(r') G(R_m^\pm)dS'$$
 
 $$R_m^\pm = |r_m^{c\pm}-r'|$$
+
+# EFIE Equations
+
+The scattered electric field can be computed from the surface current by
+
+$$E(r) = -j\omega A(r) - \nabla \phi(r)$$
+
+with magnetic vector potential given by 
+$$A(r) = \mu \int J(r') G(r, r') dS'$$
+
+and scalar potential given by 
+
+$$\phi(r) = \frac{1}{\epsilon}\int \sigma(r') G(r, r') dS'$$
+
+where the green's function is defined by
+
+$$G(r, r') = \frac{e^{-jkR}}{4\pi R}$$
+
+displacement vector by
+
+$$R = |r-r'|$$
+
+and surface charge density defined by continuity equation
+
+$$\nabla\cdot J = -j\omega \sigma$$
+
+expaning the potential term gives us
+
+$$\nabla \phi(r) = \frac{j}{\omega\epsilon}\oint\nabla'\cdot J(r') \nabla G(r,r') dS'$$
+
+where
+
+$$\nabla G(r, r') =  -G(r,r') (1+ j k R)\frac{r-r'}{R}$$
 
 # References
 
@@ -188,3 +225,48 @@ $$R^+_m = | r^+_m - r' |$$
             dSp = dSp.reshape(-1, order="F")
             ind = ind.reshape(ind.shape[0], ind.shape[1], -1, order="F")
 ``` -->
+
+<!-- # singular equations
+
+The potential matrices are defined by the following integrals
+
+$$A_{mn}^\pm = \mu \oint f_n(r')  G_m(r_m^{c\pm}, r')dS'$$
+$$\phi_{mn}^\pm = \frac{j}{\omega \epsilon} \oint \nabla'\cdot f_n(r')G_m(r_m^{c\pm}, r')dS'$$
+
+where:
+
+$$G_m(r_m^{c\pm}, r') = \frac{e^{-i k R_m^\pm}}{R_m^\pm} \qquad R_m^\pm = |r_m^{c\pm} - r'|$$
+
+and
+
+$$f_n(r') = \pm \frac{l_n}{2A_n^\pm}( r'-r_n^\pm) \qquad \nabla'\cdot f_n(r') = \pm \frac{l_n}{A_n^\pm} \qquad r' \in T_n^\pm$$
+
+Let $S_1$ define a singular subdomain of $S$ where $r'\neq r_m^{c\pm}$ and $S_2$ define the subdomain where $r' = r_m^{c\pm}$, we can divide up the integrals as follows
+
+$$A = \mu \oint_{S_1} f_n G_m dS' + \oint_{S_2}f_n G_m dS'$$
+
+We can begin to extract the singular component over $S_2$ by expanding as follows
+
+$$\begin{aligned}
+    \oint_{S_2}f_n G_m dS' &= \oint_{S_2}f_n \left(\frac{e^{-ikR_m}-1}{R_m} + \frac{1}{R_m}\right)dS'\\
+    &= \oint_{S_2}f_n\frac{e^{-ikR_m}-1}{R_m}dS' + \oint_{S_2}f_n\frac{dS'}{R_m}\\
+    &= \oint_{S_2}f_n(-ik)dS' +\oint_{S_2} \pm \frac{l_n}{2A_n^\pm }(r'-r_n^{c\pm})\frac{dS'}{R_m}
+\end{aligned}$$
+ 
+over $S_2$ we can extract the singular part by
+
+The singular integrals can be transformed as follows
+
+$$
+\int_T \frac{e^{-jkR}}{R} \, dS' = \int_T \frac{e^{-jkR} - 1}{R} \, dS' + \int_T \frac{dS'}{R}
+$$
+
+and
+
+$$\begin{aligned}
+    \int_T (\rho' - \rho_m) \frac{e^{-jkR}}{R} \, dS' \\
+    &= \int_T (\rho' - \rho) \frac{e^{-jkR}}{R} \, dS' + (\rho - \rho_m) \int_T \frac{e^{-jkR}}{R} \, dS'\\
+&= \int_T (\rho' - \rho) \frac{e^{-jkR} - 1}{R} \, dS' + (\rho - \rho_m) \int_T \frac{e^{-jkR} - 1}{R} \, dS' \\
+&+ \int_T \frac{\rho' - \rho}{R} \, dS' + (\rho - \rho_m) \int_T \frac{dS'}{R}
+
+\end{aligned}$$ -->
