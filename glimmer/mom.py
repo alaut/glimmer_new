@@ -271,8 +271,9 @@ def excitation_vector(lm, Emc, rhomc):
 
 
 def impedance_matrix(lm, omega, Avec, rhomc, phi):
+    """Rao 1982 eq. 17"""
 
-    Z = lm * (
+    Z = lm[:, None] * (
         1j * omega * cp.sum(Avec * rhomc[..., None, :] / 2, axis=(0, -1))
         + phi[0]
         - phi[1]
