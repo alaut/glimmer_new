@@ -105,6 +105,21 @@ class Solver:
         return plotter
 
 
+def get_free_vert(edge, edges):
+    """find free vertex given edge (2,) in face edges (M, 3, 2)"""
+
+    # match edge to face
+    face = np.any(np.all(edge == edges, axis=-1), axis=-1)
+
+    # get face to points
+    points = np.unique(edges[face])
+
+    # find free vertex
+    vertex = np.setdiff1d(points, edge)
+
+    return int(vertex[0])
+
+
 def rwg(con):
     """generate RWG (Rao, Wilton, Glisson) connectivity from trimesh face connectivity"""
 
@@ -120,23 +135,9 @@ def rwg(con):
     # define rwg basis of unique internal edges (M, 2)
     internal_edges = unique_edges[counts == 2]
 
-    def get_free_vert(edge):
-        """find free vertex given edge (2,) in face edges (M, 3, 2)"""
-
-        # match edge to face
-        face = np.any(np.all(edge == edges, axis=-1), axis=-1)
-
-        # get face to points
-        points = np.unique(edges[face])
-
-        # find free vertex
-        vertex = np.setdiff1d(points, edge)
-
-        return int(vertex[0])
-
     # find free rwg vertices
-    vert_pos = np.array([get_free_vert(edge) for edge in internal_edges])
-    vert_neg = np.array([get_free_vert(edge[::-1]) for edge in internal_edges])
+    vert_pos = [get_free_vert(edge, edges) for edge in internal_edges]
+    vert_neg = [get_free_vert(edge[::-1], edges) for edge in internal_edges]
 
     c1p = np.stack([internal_edges[:, 0], internal_edges[:, 1], vert_pos], axis=-1)
     c1n = np.stack([internal_edges[:, 1], internal_edges[:, 0], vert_neg], axis=-1)
