@@ -6,7 +6,7 @@ from scipy.special import jnp_zeros, jv, jvp
 
 eta = np.sqrt(mu_0 / epsilon_0)
 
-
+from . import set_field
 @dataclass
 class TransverseElectric(pv.StructuredGrid):
 
@@ -22,6 +22,9 @@ class TransverseElectric(pv.StructuredGrid):
 
     rmin: float = 0
 
+    nr: int = None
+    nt: int = None
+
     def __post_init__(self):
 
         k0 = 2 * np.pi / self.lam
@@ -34,12 +37,15 @@ class TransverseElectric(pv.StructuredGrid):
             self.omf = self.a / (nu / k0)
 
         dl = self.lam / self.num_lam
-        nr = int(np.max([self.n * self.num_lam, (self.a - self.rmin) / dl]))
-        nt = int(np.max([self.m * self.num_lam, 2 * np.pi * self.a / dl]))
+
+        if self.nr is None:
+            self.nr = int(np.max([self.n * self.num_lam, (self.a - self.rmin) / dl]))
+        if self.nt is None:
+            self.nt = int(np.max([self.m * self.num_lam, 2 * np.pi * self.a / dl]))
 
         R, T, Z = np.meshgrid(
-            np.linspace(self.rmin, self.a, nr),
-            np.linspace(0, 2 * np.pi, nt),
+            np.linspace(self.rmin, self.a, self.nr),
+            np.linspace(0, 2 * np.pi, self.nt),
             0,
             indexing="ij",
         )
@@ -82,20 +88,14 @@ class TransverseElectric(pv.StructuredGrid):
         E = np.stack([Ex, Ey, Ez], axis=-1)
         H = np.stack([Hx, Hy, Hz], axis=-1)
 
-        self["Er"] = np.real(E)
-        self["Ei"] = np.imag(E)
+        set_field(self, E, "E")
+        set_field(self, H, "H")
 
-        self["Hr"] = np.real(H)
-        self["Hi"] = np.imag(H)
 
-        self["|E|"] = np.abs(E)
-        self["|H|"] = np.abs(H)
-
-        self.set_active_scalars("|E|")
-        self.set_active_vectors("|E|")
+# from glimmer.mom import set_fields
 
 
 if __name__ == "__main__":
 
-    te = TransverseElectric(lam=300 / 110, m=22, n=6, omf=1.06)
+    te = TransverseElectric(lam=300 / 110, m=22, n=6, omf=1.06, rmin=8)
     te.plot()
