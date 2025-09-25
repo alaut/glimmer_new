@@ -229,7 +229,6 @@ def green_function(rmc, rp, k):
     """Return Green's function at quadrature points"""
     Rm = cp.linalg.norm(cp.asarray(rmc[..., None, None, :]) - cp.asarray(rp), axis=-1)
     Gm = cp.exp(-1j * k * Rm) / Rm
-    Gm[~cp.isfinite(Gm)] = 0
     return Gm
 
 
