@@ -122,6 +122,16 @@ def Grid(d, xlim=None, ylim=None, zlim=None, ds: pv.DataSet = None, scale=1.0):
 
 def Plot(objects, plotter=None, cmap="jet"):
 
+    def plot(ds):
+
+        try:
+            distance = ds.length / np.linalg.norm(ds.dimensions)
+            actor = plotter.add_volume(ds, cmap=cmap, opacity_unit_distance=distance)
+        except:
+            actor = plotter.add_mesh(ds, cmap=cmap)
+
+        return actor
+
     with Timer("Plotting"):
 
         pv.global_theme.cmap = cmap
@@ -129,13 +139,7 @@ def Plot(objects, plotter=None, cmap="jet"):
         if plotter is None:
             plotter = pv.Plotter()
 
-        for ds in objects:
-
-            try:
-                distance = ds.length / np.linalg.norm(ds.dimensions)
-                plotter.add_volume(ds, cmap=cmap, opacity_unit_distance=distance)
-            except:
-                plotter.add_mesh(ds, cmap=cmap)
+        actors = [plot(ds) for ds in objects]
 
     plotter.enable_parallel_projection()
     plotter.show_grid()

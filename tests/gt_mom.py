@@ -12,4 +12,7 @@ for obj in solver.probes:
     integrate_power(obj)
 
 solver.save("./temp/gt/mom")
-solver.plot().show()
+plotter = solver.plot()
+
+
+plotter.show()
