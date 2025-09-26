@@ -45,8 +45,8 @@ class Solver:
     def solve(self):
         """Solve EFIE on PEC triangulation with method of moments."""
 
-        k = 2 * np.pi / self.lam
-        omega = k * c
+        self.k = 2 * np.pi / self.lam
+        omega = self.k * c
 
         print(f"Array Mode [{self.mode}]")
 
@@ -66,10 +66,10 @@ class Solver:
             fm, dfm = build_basis_functions(rp, rm, lm, Am, isin)
 
         with Timer("Generating Green's Function"):
-            Gm = green_function(rmc, rp, k)
+            Gm = green_function(rmc, rp, self.k)
 
         with Timer("Assembling scalar potentials"):
-            phi = assemble_scalar_potential(Gm * dSp, 0 * dfm, omega, self.mode)
+            phi = assemble_scalar_potential(Gm * dSp, dfm, omega, self.mode)
 
         with Timer("Assembling vector potentials"):
             Avec = assemble_vector_potential(Gm * dSp, fm, self.mode)
@@ -95,8 +95,10 @@ class Solver:
             self.tri = self.tri.compute_derivative("Jr", divergence="divJr")
             self.tri = self.tri.compute_derivative("Ji", divergence="divJi")
 
+    def post(self):
+
         for probe in self.probes:
-            radiate(k, self.tri, probe, self.chunks)
+            radiate(self.k, self.tri, probe, self.chunks)
             process_fields(probe, keys="E")
             probe.set_active_scalars("||E||^2")
 
@@ -167,7 +169,7 @@ def get_connectivity(tri):
     return tri.faces.reshape(-1, 4)[:, 1:]
 
 
-def subdivide_faces_by_quadrature(tri: pv.PolyData, con, deg: int = 2, show=False):
+def subdivide_faces_by_quadrature(tri: pv.PolyData, con, deg: int = 4, show=False):
     """subdivide triangulation for integration by quadrature (assert deg = 2, 3, 4, 6, 7, 12)"""
 
     r = tri.points[con]
