@@ -157,8 +157,7 @@ def rwg(con):
     con_m = np.stack([c1p, c1n])
 
     # define adjacency
-    isin = np.all(np.sort(con) == np.sort(con_m)[:, :, None], axis=-1)
-    r_in_T = np.array([1, -1])[:, None, None] * isin
+    r_in_T = np.all(np.sort(con) == np.sort(con_m)[:, :, None], axis=-1)
 
     return con_m, r_in_T
 
@@ -205,9 +204,10 @@ def get_rwg_geometry(tri, con_m):
     rmc = cp.mean(rm, axis=0)
 
     # RWG areas
-    u = rm[0] - rm[-1]
-    v = rm[1] - rm[-1]
+    u = rm[0] - rm[-1]  # v1 - v
+    v = rm[1] - rm[-1]  # v2 - v
     Am = 0.5 * cp.linalg.norm(cp.cross(u, v, axis=-1), axis=-1)
+    Am[-1] = -Am[-1]  # signed area (Alex Laut)
 
     # RWG fields at vertices
     Em = cp.asarray(get_field(tri, "E")[con_m])
@@ -229,9 +229,11 @@ def build_basis_functions(rp, rm, lm, Am, r_in_T):
 
     # basis function divergence
     dfm = cp.array(r_in_T) * (lm / Am)[..., None]
+    dfm[~r_in_T] = 0
 
     # basis function
     fm = 0.5 * dfm[..., None, None] * rho
+    fm[~r_in_T] = 0
 
     return fm, dfm
 
@@ -263,8 +265,7 @@ def assemble_scalar_potential(GmdS, dfm, omega, mode="cupy"):
             phi = np.einsum(subscripts, GmdS.get(), dfm.get())
         case "numpy-sparse":
             dfm = sparse.as_coo(dfm.get())
-            phi = np.einsum(subscripts, GmdS.get(), dfm)
-            phi = cp.array(phi.todense())
+            phi = cp.array(np.einsum(subscripts, GmdS.get(), dfm).todense())
         case "tensorflow":
             GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
             dfm = tf.convert_to_tensor(dfm.get(), dtype=tf.complex64)
@@ -298,8 +299,7 @@ def assemble_vector_potential(GmdS, fm, mode="cupy"):
             A = np.array(np.einsum(subscripts, GmdS.get(), fm.get()))
         case "numpy-sparse":
             fm = sparse.asarray(fm.get())
-            A = np.array(np.einsum(subscripts, GmdS.get(), fm))
-            A = cp.array(A.todense())
+            A = cp.array(np.einsum(subscripts, GmdS.get(), fm).todense())
         case "tensorflow":
             GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
             fm = tf.convert_to_tensor(fm.get(), dtype=tf.complex64)
