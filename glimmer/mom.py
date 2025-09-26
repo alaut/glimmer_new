@@ -245,9 +245,11 @@ def green_function(rmc, rp, k):
 def assemble_scalar_potential(GmdS, dfm, omega, mode="cupy"):
     """Rao 1982 eq. 20"""
 
+    subscripts = "impq,inp->imn"
+
     match mode:
         case "cupy":
-            phi = cp.einsum("impq,inp->imn", GmdS, dfm)
+            phi = cp.einsum(subscripts, GmdS, dfm)
         case "cupy-sparse":
             _, M, N, n = GmdS.shape
             GdSm, dfm = cp.broadcast_arrays(GmdS, dfm[..., None])
@@ -257,16 +259,19 @@ def assemble_scalar_potential(GmdS, dfm, omega, mode="cupy"):
             for i in range(2):
                 phi[i] = GdSmp[i] @ csr_matrix(dfpn[i])
         case "numpy":
-            phi = np.einsum("impq,inp->imn", GmdS.get(), dfm.get())
+            phi = np.einsum(subscripts, GmdS.get(), dfm.get())
+        case "numpy-sparse":
+            dfm = sparse.as_coo(dfm.get())
+            phi = np.einsum(subscripts, GmdS.get(), dfm)
+            phi = cp.array(phi.todense())
         case "tensorflow":
             GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
             dfm = tf.convert_to_tensor(dfm.get(), dtype=tf.complex64)
-            phi = cp.array(tf.einsum("impq,inp->imn", GmdS, dfm).numpy())
-
+            phi = cp.array(tf.einsum(subscripts, GmdS, dfm).numpy())
         case "pytorch":
             GmdS = torch.from_numpy(GmdS.get()).to(dtype=torch.complex64)
             dfm = torch.from_numpy(dfm.get()).to(dtype=torch.complex64)
-            phi = torch.einsum("impq,inp->imn", GmdS, dfm)
+            phi = torch.einsum(subscripts, GmdS, dfm)
             phi = cp.array(phi.numpy())
 
     return 1j / (omega * epsilon_0) * phi
@@ -275,29 +280,33 @@ def assemble_scalar_potential(GmdS, dfm, omega, mode="cupy"):
 def assemble_vector_potential(GmdS, fm, mode="cupy"):
     """Rao 1982 eq. 19"""
 
+    subscripts = "impq,inpqj->imnj"
+
     match mode:
         case "cupy":
-            A = cp.einsum("impq,inpqj->imnj", GmdS, fm)
+            A = cp.einsum(subscripts, GmdS, fm)
         case "cupy-sparse":
             _, M, N, n = GmdS.shape
-
             GdSmp = GmdS.reshape(2, M, -1)
             fpn = fm.reshape(2, M, -1, 3).transpose(0, 2, 1, 3)
-
             A = cp.empty((2, M, M, 3), dtype=cp.complex128)
             for i in range(2):
                 for j in range(3):
                     A[i, ..., j] = GdSmp[i] @ csr_matrix(fpn[i, ..., j])
         case "numpy":
-            A = cp.array(cp.einsum("impq,inpqj->imnj", GmdS.get(), fm.get()))
+            A = np.array(np.einsum(subscripts, GmdS.get(), fm.get()))
+        case "numpy-sparse":
+            fm = sparse.asarray(fm.get())
+            A = np.array(np.einsum(subscripts, GmdS.get(), fm))
+            A = cp.array(A.todense())
         case "tensorflow":
             GmdS = tf.convert_to_tensor(GmdS.get(), dtype=tf.complex64)
             fm = tf.convert_to_tensor(fm.get(), dtype=tf.complex64)
-            A = cp.array(tf.einsum("impq,inpqj->imnj", GmdS, fm).numpy())
+            A = cp.array(tf.einsum(subscripts, GmdS, fm).numpy())
         case "pytorch":
             GmdS = torch.from_numpy(GmdS.get()).to(dtype=torch.complex64)
             fm = torch.from_numpy(fm.get()).to(dtype=torch.complex64)
-            A = torch.einsum("impq,inpqj->imnj", GmdS, fm)
+            A = torch.einsum(subscripts, GmdS, fm)
             A = cp.array(A.numpy())
 
     return mu_0 * A
