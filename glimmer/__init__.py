@@ -1,5 +1,6 @@
+from datetime import datetime, timedelta
 from dataclasses import dataclass
-import time
+
 import numpy as np
 
 import pyvista as pv
@@ -150,13 +151,18 @@ def Plot(objects, plotter=None, cmap="jet"):
 @dataclass
 class Timer:
 
-    text: str = "Working"
+    message: str = "Working"
+
+    stop: datetime = None
+    start: datetime = None
+    elapsed: timedelta = None
 
     def __enter__(self):
-        self.start = time.time()
-        print(self.text, end="\t")
+        self.start = datetime.now()
+        print(self.message, end="\t")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        elapsed = time.time() - self.start
-        print(f"[{elapsed:.1f} s]")
+        self.stop = datetime.now()
+        self.elapsed = self.stop - self.start
+        print(f"[{self.elapsed.total_seconds():.1f} s]")
